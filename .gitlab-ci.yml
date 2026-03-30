@@ -1,0 +1,47 @@
+stages:
+  - compile_build_push
+
+variables:
+  HARBOR_BASE_IMAGE_VERSION: "v2.14.2"
+  HARBOR_BASE_NAMESPACE: "goharbor"
+  REGISTRY: "registry.cern.ch"
+  IMAGE_PREFIX: "${REGISTRY}/harbor-dev-hczifrus/test_pipe"
+  PLATFORM: "linux/amd64"
+  DOCKER_DRIVER: overlay2
+  DOCKER_HOST: tcp://docker:2375
+  DOCKER_TLS_CERTDIR: ""
+
+# This pipeline is to run with git tags (To build spesific versions)
+workflow:
+  rules:
+    - if: $CI_COMMIT_TAG
+
+compile_build_push:
+  stage: compile_build_push
+  image: registry.cern.ch/docker.io/library/golang:1.24
+  tags:
+    - docker-privileged-xl
+  services:
+    - docker:27-dind
+  before_script: |
+    apt-get update && apt-get install -y make docker.io docker-compose
+    while (! docker stats --no-stream ); do
+      echo "Waiting for Docker to start..."; sleep 1
+    done
+    echo "$CI_REGISTRY_PASSWORD" | docker login ${REGISTRY} -u $CI_REGISTRY_USER --password-stdin
+  script: |
+    make gen_apis
+    make compile
+    docker build -f make/photon/core/Dockerfile \
+      --build-arg harbor_base_image_version=${HARBOR_BASE_IMAGE_VERSION} \
+      --build-arg harbor_base_namespace=${HARBOR_BASE_NAMESPACE} \
+      --platform ${PLATFORM} \
+      -t ${IMAGE_PREFIX}/harbor-core:${CI_COMMIT_TAG} .
+    docker build -f make/photon/jobservice/Dockerfile \
+      --build-arg harbor_base_image_version=${HARBOR_BASE_IMAGE_VERSION} \
+      --build-arg harbor_base_namespace=${HARBOR_BASE_NAMESPACE} \
+      --platform ${PLATFORM} \
+      -t ${IMAGE_PREFIX}/harbor-jobservice:${CI_COMMIT_TAG} .
+    docker push ${IMAGE_PREFIX}/harbor-core:${CI_COMMIT_TAG}
+    docker push ${IMAGE_PREFIX}/harbor-jobservice:${CI_COMMIT_TAG}
+
