@@ -45,6 +45,7 @@ func main() {
 	// Start pprof server
 	lib.StartPprof()
 
+	log.Info("PIPELINE_TEST_MARKER: custom jobservice image is running")
 	cfgLib.DefaultCfgManager = common.RestCfgManager
 	if err := cfgLib.DefaultMgr().Load(context.Background()); err != nil {
 		panic(fmt.Sprintf("failed to load configuration, error: %v", err))

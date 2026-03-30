@@ -156,6 +156,7 @@ func main() {
 		web.BConfig.WebConfig.Session.SessionProviderConfig = redisCoreURL
 	}
 
+	log.Info("PIPELINE_TEST_MARKER: custom core image is running")
 	log.Info("initializing cache ...")
 	// the harbor db used for harbor business, use core db if not specified
 	redisHarborURL := os.Getenv("_REDIS_URL_HARBOR")
