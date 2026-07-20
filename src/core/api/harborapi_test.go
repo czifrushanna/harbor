@@ -85,7 +85,6 @@ func init() {
 	web.BConfig.WebConfig.Session.SessionOn = true
 	web.TestBeegoInit(apppath)
 
-	web.Router("/api/internal/buildkitdockerfile/extract", &InternalAPI{}, "post:ExtractBuildkitDockerfile")
 	web.Router("/api/internal/syncquota", &InternalAPI{}, "post:SyncQuota")
 
 	// Init user Info

@@ -16,15 +16,11 @@ package api
 
 import (
 	"context"
-	"encoding/json"
-	"io"
-	"strings"
 
 	o "github.com/beego/beego/v2/client/orm"
 
 	"github.com/goharbor/harbor/src/common"
 	"github.com/goharbor/harbor/src/common/models"
-	buildkitdockerfilectl "github.com/goharbor/harbor/src/controller/buildkitdockerfile"
 	"github.com/goharbor/harbor/src/controller/quota"
 	"github.com/goharbor/harbor/src/controller/user"
 	"github.com/goharbor/harbor/src/core/auth"
@@ -32,27 +28,11 @@ import (
 	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/lib/log"
 	"github.com/goharbor/harbor/src/lib/orm"
-	buildkitdockerfilepkg "github.com/goharbor/harbor/src/pkg/buildkitdockerfile"
 )
 
 // InternalAPI handles request of harbor admin...
 type InternalAPI struct {
 	BaseController
-}
-
-var buildkitDockerfileCtl buildkitdockerfilectl.Controller = buildkitdockerfilectl.DefaultController
-var buildkitDockerfileOptimize = buildkitdockerfilepkg.OptimizeWithEnvConfig
-
-type buildkitDockerfileExtractRequest struct {
-	OCIArchivePath string `json:"oci_archive_path"`
-	Optimize       bool   `json:"optimize,omitempty"`
-}
-
-type buildkitDockerfileExtractResponse struct {
-	Dockerfile                string `json:"dockerfile"`
-	OptimizedDockerfile       string `json:"optimized_dockerfile,omitempty"`
-	AttestationManifestDigest string `json:"attestation_manifest_digest"`
-	StatementDigest           string `json:"statement_digest"`
 }
 
 // Prepare validates the URL and parms
@@ -90,65 +70,6 @@ func (ia *InternalAPI) RenameAdmin() {
 		log.Errorf("failed to destroy session for admin user, error: %v", err)
 		return
 	}
-}
-
-// ExtractBuildkitDockerfile extracts a Dockerfile from a BuildKit-enabled OCI archive.
-func (ia *InternalAPI) ExtractBuildkitDockerfile() {
-	ctx := ia.Ctx.Request.Context()
-	defer ia.Ctx.Request.Body.Close()
-
-	result, optimize, err := ia.extractBuildkitDockerfile(ctx)
-	if err != nil {
-		ia.SendError(err)
-		return
-	}
-
-	optimizedDockerfile := ""
-	if optimize {
-		optimizedDockerfile, err = buildkitDockerfileOptimize(ctx, result.Dockerfile)
-		if err != nil {
-			ia.SendError(err)
-			return
-		}
-	}
-
-	ia.WriteJSONData(&buildkitDockerfileExtractResponse{
-		Dockerfile:                result.Dockerfile,
-		OptimizedDockerfile:       optimizedDockerfile,
-		AttestationManifestDigest: result.AttestationManifestDigest,
-		StatementDigest:           result.StatementDigest,
-	})
-}
-
-func (ia *InternalAPI) extractBuildkitDockerfile(ctx context.Context) (*buildkitdockerfilectl.Result, bool, error) {
-	if strings.HasPrefix(ia.Ctx.Request.Header.Get("Content-Type"), "multipart/form-data") {
-		file, _, err := ia.Ctx.Request.FormFile("oci_archive")
-		if err != nil {
-			file, _, err = ia.Ctx.Request.FormFile("archive")
-		}
-		if err != nil {
-			return nil, false, errors.BadRequestError(err).WithMessage("oci_archive upload is required")
-		}
-		defer file.Close()
-
-		result, err := buildkitDockerfileCtl.ExtractDockerfileFromReader(ctx, file)
-		return result, strings.EqualFold(ia.Ctx.Request.FormValue("optimize"), "true"), err
-	}
-
-	req := &buildkitDockerfileExtractRequest{}
-	body, err := io.ReadAll(ia.Ctx.Request.Body)
-	if err != nil {
-		return nil, false, errors.BadRequestError(nil).WithMessage("failed to read request body")
-	}
-	if err := json.Unmarshal(body, req); err != nil {
-		return nil, false, errors.BadRequestError(nil).WithMessage(err.Error())
-	}
-	if len(req.OCIArchivePath) == 0 {
-		return nil, false, errors.BadRequestError(nil).WithMessage("oci_archive_path is required")
-	}
-
-	result, err := buildkitDockerfileCtl.ExtractDockerfile(ctx, req.OCIArchivePath)
-	return result, req.Optimize, err
 }
 
 // SyncQuota ...

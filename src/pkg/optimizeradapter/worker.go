@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/goharbor/harbor/src/lib"
 	"github.com/goharbor/harbor/src/lib/log"
 	"github.com/goharbor/harbor/src/pkg/buildkitdockerfile"
 	v1 "github.com/goharbor/harbor/src/pkg/optimizer/rest/v1"
@@ -28,6 +29,14 @@ import (
 
 // workerTimeout bounds one optimization end to end (registry pulls + LLM call).
 const workerTimeout = 5 * time.Minute
+
+// newRegistryClient constructs the registry client used to pull artifact blobs.
+// Extracted as a var (rather than calling registry.NewClientWithAuthorizer directly
+// in run()) so tests can substitute a fake registry.Client instead of standing up a
+// real HTTP registry to exercise run()'s error-classification branches.
+var newRegistryClient = func(url string, authorizer lib.Authorizer, insecure bool) registry.Client {
+	return registry.NewClientWithAuthorizer(url, authorizer, insecure, "")
+}
 
 // rawAuthorizer replays the Authorization header value Harbor put into the optimize
 // request (Basic robot credential or Bearer token) verbatim on every registry request.
@@ -57,12 +66,7 @@ func (s *Server) process(id string, req *v1.OptimizeRequest) {
 
 func (s *Server) run(ctx context.Context, req *v1.OptimizeRequest) *v1.OptimizationReport {
 	// 1. Pull the artifact blobs from the Harbor registry with the handed credential.
-	cli := registry.NewClientWithAuthorizer(
-		req.Registry.URL,
-		&rawAuthorizer{header: req.Registry.Authorization},
-		req.Registry.Insecure,
-		"",
-	)
+	cli := newRegistryClient(req.Registry.URL, &rawAuthorizer{header: req.Registry.Authorization}, req.Registry.Insecure)
 
 	src := &buildkitdockerfile.RegistryBlobSource{
 		Client:     cli,

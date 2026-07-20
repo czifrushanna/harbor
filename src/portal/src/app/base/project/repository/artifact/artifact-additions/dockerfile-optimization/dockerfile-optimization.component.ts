@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 import { Component, Input, OnDestroy, OnInit } from '@angular/core';
-import { Subscription, timer } from 'rxjs';
-import { finalize, switchMap } from 'rxjs/operators';
+import { Subscription, of, timer } from 'rxjs';
+import { catchError, finalize, switchMap } from 'rxjs/operators';
 import { DockerfileService } from '../../../../../../../../ng-swagger-gen/services/dockerfile.service';
 import { DockerfileOptimization } from '../../../../../../../../ng-swagger-gen/models/dockerfile-optimization';
 
@@ -138,11 +138,17 @@ export class DockerfileOptimizationComponent implements OnInit, OnDestroy {
         this.pollSubscription = timer(POLL_INTERVAL_MS, POLL_INTERVAL_MS)
             .pipe(
                 switchMap(() =>
-                    this.dockerfileService.getDockerfileOptimization({
-                        projectName: this.projectName,
-                        repositoryName: this.repoName,
-                        reference: this.digest,
-                    })
+                    this.dockerfileService
+                        .getDockerfileOptimization({
+                            projectName: this.projectName,
+                            repositoryName: this.repoName,
+                            reference: this.digest,
+                        })
+                        // An error here must not reach the outer subscribe(): with
+                        // switchMap, an inner-observable error terminates the whole
+                        // subscription (no further timer ticks), so a single transient
+                        // failure would otherwise kill polling forever.
+                        .pipe(catchError(() => of(null)))
                 )
             )
             .subscribe({
@@ -156,11 +162,10 @@ export class DockerfileOptimizationComponent implements OnInit, OnDestroy {
                         this.showButton = true;
                         return;
                     }
-                    this.handleRecord(res);
-                },
-                error: () => {
-                    // transient polling errors are ignored; the next tick retries
-                    this.pollCount++;
+                    // res is null when this tick's request failed; the next tick retries.
+                    if (res) {
+                        this.handleRecord(res);
+                    }
                 },
             });
     }

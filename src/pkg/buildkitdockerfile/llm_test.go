@@ -24,25 +24,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestOptimizeWithEnvConfig_MissingAPIKey(t *testing.T) {
-	t.Setenv("LLMGW_API_KEY", "")
-	t.Setenv("LLMGW_API_KEY_ENV", "LLMGW_API_KEY")
-
-	_, err := OptimizeWithEnvConfig(context.Background(), "FROM scratch\n")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "not configured")
-}
-
-func TestOptimizeWithEnvConfig_CustomKeyEnv(t *testing.T) {
-	t.Setenv("MY_CUSTOM_KEY_ENV", "MY_CUSTOM_KEY")
-	t.Setenv("MY_CUSTOM_KEY", "")
-
-	_, err := OptimizeWithEnvConfig(context.Background(), "FROM scratch\n")
-	// MY_CUSTOM_KEY is empty so it should still fail — we just confirm the custom
-	// env-name indirection is respected (no panic, correct error code path).
-	require.Error(t, err)
-}
-
 func TestOptimizeDockerfile_StreamingDelta(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, http.MethodPost, r.Method)

@@ -60,7 +60,8 @@ type Config struct {
 	APIKey string
 	// APIBaseURL is the LLM gateway chat-completions endpoint.
 	APIBaseURL string
-	// Model is the LLM model identifier.
+	// Model is the LLM model identifier. It is deployment-specific and has no
+	// baked-in default, so it must be supplied via LLMGW_MODEL.
 	Model string
 }
 
@@ -72,11 +73,15 @@ func LoadConfig() (*Config, error) {
 		MaxConcurrency: defaultMaxConcurrency,
 		APIKey:         os.Getenv(envAPIKey),
 		APIBaseURL:     buildkitdockerfile.DefaultLLMAPIBaseURL,
-		Model:          buildkitdockerfile.DefaultLLMModel,
+		Model:          os.Getenv(envModel),
 	}
 
 	if cfg.APIKey == "" {
 		return nil, errors.Errorf("%s is required", envAPIKey)
+	}
+
+	if cfg.Model == "" {
+		return nil, errors.Errorf("%s is required", envModel)
 	}
 
 	if v := os.Getenv(envListenAddr); v != "" {
@@ -85,10 +90,6 @@ func LoadConfig() (*Config, error) {
 
 	if v := os.Getenv(envAPIBaseURL); v != "" {
 		cfg.APIBaseURL = v
-	}
-
-	if v := os.Getenv(envModel); v != "" {
-		cfg.Model = v
 	}
 
 	if v := os.Getenv(envJobTTL); v != "" {

@@ -1,8 +1,12 @@
 # rec-engine optimizer adapter Deployment.
 #
-# Prerequisite — the LLM gateway API key lives on the adapter, not on harbor-core:
+# Prerequisite — the LLM gateway credentials live on the adapter, not on
+# harbor-core. Both the API key and the model identifier are deployment-specific
+# and are supplied through the llmgw-secret so nothing about the chosen model is
+# committed to the repository:
 #   kubectl create secret generic llmgw-secret \
 #     --from-literal=LLMGW_API_KEY=<your-key> \
+#     --from-literal=LLMGW_MODEL=<your-model> \
 #     -n harbor
 #
 # Apply with:
@@ -39,11 +43,17 @@ spec:
                 secretKeyRef:
                   name: llmgw-secret
                   key: LLMGW_API_KEY
+            # The model identifier is required and intentionally kept out of the
+            # committed manifests — it is sourced from the same secret as the API
+            # key. Pick a model your gateway key can actually reach.
+            - name: LLMGW_MODEL
+              valueFrom:
+                secretKeyRef:
+                  name: llmgw-secret
+                  key: LLMGW_MODEL
             # Uncomment to override the defaults baked into the binary:
             # - name: LLMGW_API_BASE_URL
             #   value: "https://llmgw-litellm.web.cern.ch/v1/chat/completions"
-            # - name: LLMGW_MODEL
-            #   value: "llama-3.1-8b-instruct"
             # - name: OPTIMIZER_ADAPTER_MAX_CONCURRENCY
             #   value: "4"
           readinessProbe:
