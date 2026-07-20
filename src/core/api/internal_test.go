@@ -79,7 +79,7 @@ func TestExtractBuildkitDockerfile(t *testing.T) {
 			StatementDigest:           "sha256:statement",
 		},
 	}
-	buildkitDockerfileOptimize = func(_ context.Context, _ string, _ string, _ string, dockerfile string) (string, error) {
+	buildkitDockerfileOptimize = func(_ context.Context, dockerfile string) (string, error) {
 		return dockerfile + "# optimized\n", nil
 	}
 
@@ -290,5 +290,9 @@ func (s *stubBuildkitDockerfileController) ExtractDockerfileFromReader(_ context
 	if s.readerResult != nil {
 		return s.readerResult, s.err
 	}
+	return s.result, s.err
+}
+
+func (s *stubBuildkitDockerfileController) ExtractDockerfileFromSource(_ context.Context, _ buildkitdockerfilectl.BlobSource) (*buildkitdockerfilectl.Result, error) {
 	return s.result, s.err
 }

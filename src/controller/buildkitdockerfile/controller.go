@@ -24,10 +24,14 @@ import (
 // Result is the extracted Dockerfile and OCI digest metadata.
 type Result = buildkitdockerfile.Result
 
+// BlobSource is re-exported so callers don't need to import the pkg directly.
+type BlobSource = buildkitdockerfile.BlobSource
+
 // Controller provides the BuildKit Dockerfile extraction entry point.
 type Controller interface {
 	ExtractDockerfile(ctx context.Context, ociArchivePath string) (*Result, error)
 	ExtractDockerfileFromReader(ctx context.Context, archive io.Reader) (*Result, error)
+	ExtractDockerfileFromSource(ctx context.Context, src BlobSource) (*Result, error)
 }
 
 // DefaultController is the default adapter implementation.
@@ -50,4 +54,8 @@ func (c *controller) ExtractDockerfile(ctx context.Context, ociArchivePath strin
 
 func (c *controller) ExtractDockerfileFromReader(ctx context.Context, archive io.Reader) (*Result, error) {
 	return c.workflow.ExtractDockerfileFromReader(ctx, archive)
+}
+
+func (c *controller) ExtractDockerfileFromSource(ctx context.Context, src BlobSource) (*Result, error) {
+	return c.workflow.ExtractDockerfileFromSource(ctx, src)
 }

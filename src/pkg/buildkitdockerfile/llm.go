@@ -22,9 +22,40 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 )
+
+const (
+	DefaultLLMAPIBaseURL = "https://llmgw-litellm.web.cern.ch/v1/chat/completions"
+	DefaultLLMModel      = "llama-3.1-8b-instruct"
+	DefaultLLMAPIKeyEnv  = "LLMGW_API_KEY"
+)
+
+// OptimizeWithEnvConfig resolves LLM credentials from environment variables and
+// calls OptimizeDockerfile. Returns an error if the API key is not configured.
+func OptimizeWithEnvConfig(ctx context.Context, dockerfile string) (string, error) {
+	apiKeyEnv := os.Getenv("LLMGW_API_KEY_ENV")
+	if apiKeyEnv == "" {
+		apiKeyEnv = DefaultLLMAPIKeyEnv
+	}
+	apiKey := os.Getenv(apiKeyEnv)
+	if apiKey == "" {
+		return "", fmt.Errorf("LLM optimization is not configured")
+	}
+
+	apiBaseURL := os.Getenv("LLMGW_API_BASE_URL")
+	if apiBaseURL == "" {
+		apiBaseURL = DefaultLLMAPIBaseURL
+	}
+	model := os.Getenv("LLMGW_MODEL")
+	if model == "" {
+		model = DefaultLLMModel
+	}
+
+	return OptimizeDockerfile(ctx, apiBaseURL, apiKey, model, dockerfile)
+}
 
 type chatMessage struct {
 	Role    string `json:"role"`

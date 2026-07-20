@@ -689,6 +689,11 @@
     },
     "REPOSITORY": {
         "BUILD_HISTORY": "Histórico de Build",
+        "DOCKERFILE": "Dockerfile",
+        "OPTIMIZE_DOCKERFILE": "Optimize Dockerfile",
+        "DOCKERFILE_ORIGINAL": "Original",
+        "DOCKERFILE_OPTIMIZED": "Optimized",
+        "DOCKERFILE_HINT": "Click \"Optimize Dockerfile\" to extract and optimize the Dockerfile from this image's BuildKit provenance attestation.",
         "REPO_NAME": "Repositório",
         "COPY_DIGEST_ID": "Copiar Digest",
         "DELETE": "Remover",

@@ -18,7 +18,6 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-	"os"
 	"strings"
 
 	o "github.com/beego/beego/v2/client/orm"
@@ -42,13 +41,7 @@ type InternalAPI struct {
 }
 
 var buildkitDockerfileCtl buildkitdockerfilectl.Controller = buildkitdockerfilectl.DefaultController
-var buildkitDockerfileOptimize = buildkitdockerfilepkg.OptimizeDockerfile
-
-const (
-	defaultLLMAPIBaseURL = "https://llmgw-litellm.web.cern.ch/v1/chat/completions"
-	defaultLLMModel      = "llama-3.1-8b-instruct"
-	defaultLLMAPIKeyEnv  = "LLMGW_API_KEY"
-)
+var buildkitDockerfileOptimize = buildkitdockerfilepkg.OptimizeWithEnvConfig
 
 type buildkitDockerfileExtractRequest struct {
 	OCIArchivePath string `json:"oci_archive_path"`
@@ -112,26 +105,7 @@ func (ia *InternalAPI) ExtractBuildkitDockerfile() {
 
 	optimizedDockerfile := ""
 	if optimize {
-		apiKeyEnv := os.Getenv("LLMGW_API_KEY_ENV")
-		if apiKeyEnv == "" {
-			apiKeyEnv = defaultLLMAPIKeyEnv
-		}
-		apiKey := os.Getenv(apiKeyEnv)
-		if apiKey == "" {
-			ia.SendError(errors.UnknownError(nil).WithMessage("LLM optimization is not configured"))
-			return
-		}
-
-		apiBaseURL := os.Getenv("LLMGW_API_BASE_URL")
-		if apiBaseURL == "" {
-			apiBaseURL = defaultLLMAPIBaseURL
-		}
-		model := os.Getenv("LLMGW_MODEL")
-		if model == "" {
-			model = defaultLLMModel
-		}
-
-		optimizedDockerfile, err = buildkitDockerfileOptimize(ctx, apiBaseURL, apiKey, model, result.Dockerfile)
+		optimizedDockerfile, err = buildkitDockerfileOptimize(ctx, result.Dockerfile)
 		if err != nil {
 			ia.SendError(err)
 			return

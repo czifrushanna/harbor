@@ -1,0 +1,37 @@
+.dockerfile-optimization-container {
+    padding: 1rem 0;
+}
+
+.action-row {
+    margin-bottom: 1rem;
+
+    button {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+    }
+}
+
+.comparison-panels {
+    margin-top: 1rem;
+
+    h5 {
+        margin-bottom: 0.5rem;
+    }
+}
+
+.dockerfile-pre {
+    background: var(--clr-color-neutral-100, #f4f4f4);
+    border: 1px solid var(--clr-color-neutral-400, #ccc);
+    border-radius: 3px;
+    padding: 0.75rem;
+    overflow-x: auto;
+    white-space: pre;
+    font-size: 0.75rem;
+    max-height: 480px;
+}
+
+.hint-text {
+    color: var(--clr-color-neutral-600, #666);
+    font-style: italic;
+}

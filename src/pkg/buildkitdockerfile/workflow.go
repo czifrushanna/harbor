@@ -39,10 +39,21 @@ type Result struct {
 	StatementDigest           string
 }
 
+// BlobSource abstracts how OCI index/manifest/blob bytes are fetched, allowing
+// the same extraction logic to work with both a local OCI tar archive and a
+// live registry.
+type BlobSource interface {
+	// Index returns the top-level OCI index (manifest list) JSON.
+	Index(ctx context.Context) ([]byte, error)
+	// Blob returns the raw bytes for a given digest (manifest or data blob).
+	Blob(ctx context.Context, digest string) ([]byte, error)
+}
+
 // Workflow defines the Dockerfile extraction workflow.
 type Workflow interface {
 	ExtractDockerfile(ctx context.Context, ociArchivePath string) (*Result, error)
 	ExtractDockerfileFromReader(ctx context.Context, archive io.Reader) (*Result, error)
+	ExtractDockerfileFromSource(ctx context.Context, src BlobSource) (*Result, error)
 }
 
 // NewWorkflow returns the default Dockerfile extraction workflow.
@@ -103,17 +114,31 @@ func (w *workflow) ExtractDockerfileFromReader(ctx context.Context, archive io.R
 		return nil, err
 	}
 
-	idx, err := readIndex(entries)
+	return w.ExtractDockerfileFromSource(ctx, &tarBlobSource{entries: entries})
+}
+
+// ExtractDockerfileFromSource extracts a Dockerfile from any BlobSource (tar archive or registry).
+func (w *workflow) ExtractDockerfileFromSource(ctx context.Context, src BlobSource) (*Result, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	indexBytes, err := src.Index(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	attestationDigest, err := findAttestationManifestDigest(idx, entries, 5)
+	var idx index
+	if err := json.Unmarshal(indexBytes, &idx); err != nil {
+		return nil, fmt.Errorf("unmarshal index: %w", err)
+	}
+
+	attestationDigest, err := findAttestationManifestDigestFromSource(ctx, &idx, src, 5)
 	if err != nil {
 		return nil, err
 	}
 
-	attestationManifestBytes, err := readBlob(entries, attestationDigest)
+	attestationManifestBytes, err := src.Blob(ctx, attestationDigest)
 	if err != nil {
 		return nil, err
 	}
@@ -128,7 +153,7 @@ func (w *workflow) ExtractDockerfileFromReader(ctx context.Context, archive io.R
 	}
 
 	statementDigest := manifest.Layers[0].Digest
-	statementBytes, err := readBlob(entries, statementDigest)
+	statementBytes, err := src.Blob(ctx, statementDigest)
 	if err != nil {
 		return nil, err
 	}
@@ -143,6 +168,23 @@ func (w *workflow) ExtractDockerfileFromReader(ctx context.Context, archive io.R
 		AttestationManifestDigest: attestationDigest,
 		StatementDigest:           statementDigest,
 	}, nil
+}
+
+// tarBlobSource implements BlobSource on top of an in-memory tar archive map.
+type tarBlobSource struct {
+	entries archiveEntries
+}
+
+func (t *tarBlobSource) Index(_ context.Context) ([]byte, error) {
+	content, ok := t.entries[indexFileName]
+	if !ok {
+		return nil, fmt.Errorf("%s not found in OCI archive", indexFileName)
+	}
+	return content, nil
+}
+
+func (t *tarBlobSource) Blob(_ context.Context, digest string) ([]byte, error) {
+	return readBlob(t.entries, digest)
 }
 
 func readArchiveEntries(archive io.Reader) (archiveEntries, error) {
@@ -170,21 +212,7 @@ func readArchiveEntries(archive io.Reader) (archiveEntries, error) {
 	return entries, nil
 }
 
-func readIndex(entries archiveEntries) (*index, error) {
-	content, ok := entries[indexFileName]
-	if !ok {
-		return nil, fmt.Errorf("%s not found in OCI archive", indexFileName)
-	}
-
-	var idx index
-	if err := json.Unmarshal(content, &idx); err != nil {
-		return nil, fmt.Errorf("unmarshal index.json: %w", err)
-	}
-
-	return &idx, nil
-}
-
-func findAttestationManifestDigest(idx *index, entries archiveEntries, depth int) (string, error) {
+func findAttestationManifestDigestFromSource(ctx context.Context, idx *index, src BlobSource, depth int) (string, error) {
 	if depth <= 0 {
 		return "", fmt.Errorf("attestation manifest not found (max recursion reached)")
 	}
@@ -195,23 +223,20 @@ func findAttestationManifestDigest(idx *index, entries archiveEntries, depth int
 		}
 	}
 
-	// Not found in current index; try to inspect referenced manifest blobs which might be manifest lists
+	// Not found at this level; inspect referenced manifest blobs which might be manifest lists.
 	for _, manifest := range idx.Manifests {
-		// read the blob for this manifest and try to unmarshal as an index (manifest list)
-		content, err := readBlob(entries, manifest.Digest)
+		content, err := src.Blob(ctx, manifest.Digest)
 		if err != nil {
-			// skip if blob not present
 			continue
 		}
 		var nested index
 		if err := json.Unmarshal(content, &nested); err != nil {
-			// not an index/manifest-list, skip
 			continue
 		}
 		if len(nested.Manifests) == 0 {
 			continue
 		}
-		if d, err := findAttestationManifestDigest(&nested, entries, depth-1); err == nil {
+		if d, err := findAttestationManifestDigestFromSource(ctx, &nested, src, depth-1); err == nil {
 			return d, nil
 		}
 	}

@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -96,6 +97,67 @@ func TestExtractDockerfile(t *testing.T) {
 	result, err := NewWorkflow().ExtractDockerfile(context.Background(), archivePath)
 	require.NoError(t, err)
 	require.Equal(t, "FROM alpine:3.20\nRUN echo hello\n", result.Dockerfile)
+	require.Equal(t, "sha256:attestation", result.AttestationManifestDigest)
+	require.Equal(t, "sha256:statement", result.StatementDigest)
+}
+
+// fakeBlobSource implements BlobSource from an in-memory map for testing.
+type fakeBlobSource struct {
+	index []byte
+	blobs map[string][]byte
+}
+
+func (f *fakeBlobSource) Index(_ context.Context) ([]byte, error) { return f.index, nil }
+func (f *fakeBlobSource) Blob(_ context.Context, digest string) ([]byte, error) {
+	b, ok := f.blobs[digest]
+	if !ok {
+		return nil, fmt.Errorf("blob %s not found", digest)
+	}
+	return b, nil
+}
+
+func TestExtractDockerfileFromSource(t *testing.T) {
+	const expected = "FROM alpine:3.20\nRUN echo hello\n"
+	encoded := base64.StdEncoding.EncodeToString([]byte(expected))
+
+	indexJSON, _ := json.Marshal(map[string]any{
+		"manifests": []map[string]any{
+			{
+				"digest": "sha256:attestation",
+				"annotations": map[string]string{
+					"vnd.docker.reference.type": attestationManifestType,
+				},
+			},
+		},
+	})
+	attestationJSON, _ := json.Marshal(map[string]any{
+		"layers": []map[string]string{{"digest": "sha256:statement"}},
+	})
+	statementJSON, _ := json.Marshal(map[string]any{
+		"predicate": map[string]any{
+			"runDetails": map[string]any{
+				"metadata": map[string]any{
+					"buildkit_metadata": map[string]any{
+						"source": map[string]any{
+							"infos": []map[string]string{{"data": encoded}},
+						},
+					},
+				},
+			},
+		},
+	})
+
+	src := &fakeBlobSource{
+		index: indexJSON,
+		blobs: map[string][]byte{
+			"sha256:attestation": attestationJSON,
+			"sha256:statement":   statementJSON,
+		},
+	}
+
+	result, err := NewWorkflow().ExtractDockerfileFromSource(context.Background(), src)
+	require.NoError(t, err)
+	require.Equal(t, expected, result.Dockerfile)
 	require.Equal(t, "sha256:attestation", result.AttestationManifestDigest)
 	require.Equal(t, "sha256:statement", result.StatementDigest)
 }

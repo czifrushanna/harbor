@@ -37,6 +37,10 @@ func (s *stubWorkflow) ExtractDockerfileFromReader(_ context.Context, _ io.Reade
 	return s.result, s.err
 }
 
+func (s *stubWorkflow) ExtractDockerfileFromSource(_ context.Context, _ workflow.BlobSource) (*workflow.Result, error) {
+	return s.result, s.err
+}
+
 func TestControllerForwardsToWorkflow(t *testing.T) {
 	expected := &workflow.Result{Dockerfile: "FROM scratch"}
 	ctl := &controller{workflow: &stubWorkflow{result: expected}}

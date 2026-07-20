@@ -1358,6 +1358,45 @@ paths:
           $ref: '#/responses/404'
         '500':
           $ref: '#/responses/500'
+  /projects/{project_name}/repositories/{repository_name}/artifacts/{reference}/dockerfile/optimize:
+    post:
+      summary: Optimize the Dockerfile for an artifact
+      description: Extract the original Dockerfile embedded in a BuildKit provenance attestation and return an LLM-optimized version alongside the original. Only works for images built with BuildKit provenance attestations.
+      tags:
+        - dockerfile
+      operationId: optimizeDockerfile
+      parameters:
+        - $ref: '#/parameters/requestId'
+        - $ref: '#/parameters/projectName'
+        - $ref: '#/parameters/repositoryName'
+        - $ref: '#/parameters/reference'
+      responses:
+        '200':
+          description: Successfully extracted and optimized the Dockerfile
+          headers:
+            X-Request-Id:
+              description: The ID of the corresponding request for the response
+              type: string
+          schema:
+            $ref: '#/definitions/DockerfileOptimization'
+        '400':
+          $ref: '#/responses/400'
+        '401':
+          $ref: '#/responses/401'
+        '403':
+          $ref: '#/responses/403'
+        '404':
+          $ref: '#/responses/404'
+        '412':
+          description: Precondition Failed — image has no BuildKit provenance attestation
+          headers:
+            X-Request-Id:
+              description: The ID of the corresponding request for the response
+              type: string
+          schema:
+            $ref: '#/definitions/Errors'
+        '500':
+          $ref: '#/responses/500'
   /projects/{project_name}/repositories/{repository_name}/artifacts/{reference}/tags:
     post:
       summary: Create tag
@@ -6690,6 +6729,22 @@ definitions:
         items:
           $ref: '#/definitions/Error'
           x-nullable: false
+  DockerfileOptimization:
+    description: The original and LLM-optimized Dockerfiles extracted from a BuildKit provenance attestation
+    type: object
+    properties:
+      dockerfile:
+        type: string
+        description: The original Dockerfile extracted from the BuildKit attestation
+      optimized_dockerfile:
+        type: string
+        description: The LLM-optimized version of the Dockerfile
+      attestation_manifest_digest:
+        type: string
+        description: The digest of the attestation manifest that contained the Dockerfile
+      statement_digest:
+        type: string
+        description: The digest of the in-toto statement blob that contained the Dockerfile source
   Error:
     description: a model for all the error response coming from harbor
     type: object
