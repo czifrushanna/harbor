@@ -58,3 +58,21 @@ func TestControllerReturnsWorkflowError(t *testing.T) {
 	require.ErrorIs(t, err, boom)
 	require.Nil(t, result)
 }
+
+func TestControllerFromReaderForwards(t *testing.T) {
+	expected := &workflow.Result{Dockerfile: "FROM scratch"}
+	ctl := &controller{workflow: &stubWorkflow{result: expected}}
+
+	result, err := ctl.ExtractDockerfileFromReader(context.Background(), nil)
+	require.NoError(t, err)
+	require.Same(t, expected, result)
+}
+
+func TestControllerFromSourceForwards(t *testing.T) {
+	expected := &workflow.Result{Dockerfile: "FROM alpine"}
+	ctl := &controller{workflow: &stubWorkflow{result: expected}}
+
+	result, err := ctl.ExtractDockerfileFromSource(context.Background(), nil)
+	require.NoError(t, err)
+	require.Same(t, expected, result)
+}

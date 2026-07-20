@@ -176,3 +176,173 @@ func TestExtractDockerfileMissingAttestation(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "attestation manifest not found")
 }
+
+func TestExtractDockerfileFromReaderDirect(t *testing.T) {
+	archivePath := createOCIArchive(t, "FROM golang:1.23\nRUN go build .\n")
+
+	f, err := os.Open(archivePath)
+	require.NoError(t, err)
+	defer f.Close()
+
+	result, err := NewWorkflow().ExtractDockerfileFromReader(context.Background(), f)
+	require.NoError(t, err)
+	require.Equal(t, "FROM golang:1.23\nRUN go build .\n", result.Dockerfile)
+}
+
+func TestExtractDockerfileContextCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	archivePath := createOCIArchive(t, "FROM scratch\n")
+
+	f, err := os.Open(archivePath)
+	require.NoError(t, err)
+	defer f.Close()
+
+	_, err = NewWorkflow().ExtractDockerfileFromReader(ctx, f)
+	require.ErrorIs(t, err, context.Canceled)
+}
+
+func TestAttestationManifestNoLayers(t *testing.T) {
+	indexJSON, _ := json.Marshal(map[string]any{
+		"manifests": []map[string]any{
+			{
+				"digest": "sha256:nolay",
+				"annotations": map[string]string{
+					"vnd.docker.reference.type": attestationManifestType,
+				},
+			},
+		},
+	})
+	// Attestation manifest with an empty layers array.
+	attestationJSON, _ := json.Marshal(map[string]any{"layers": []any{}})
+
+	src := &fakeBlobSource{
+		index: indexJSON,
+		blobs: map[string][]byte{
+			"sha256:nolay": attestationJSON,
+		},
+	}
+
+	_, err := NewWorkflow().ExtractDockerfileFromSource(context.Background(), src)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "no layers")
+}
+
+func TestNestedAttestationManifest(t *testing.T) {
+	const expected = "FROM ubuntu:24.04\n"
+	encoded := base64.StdEncoding.EncodeToString([]byte(expected))
+
+	// Top-level index points to a nested manifest list (not directly annotated).
+	indexJSON, _ := json.Marshal(map[string]any{
+		"manifests": []map[string]any{
+			{"digest": "sha256:outer"},
+		},
+	})
+	// The nested manifest list contains the real attestation manifest.
+	nestedIndexJSON, _ := json.Marshal(map[string]any{
+		"manifests": []map[string]any{
+			{
+				"digest": "sha256:attest",
+				"annotations": map[string]string{
+					"vnd.docker.reference.type": attestationManifestType,
+				},
+			},
+		},
+	})
+	attestationJSON, _ := json.Marshal(map[string]any{
+		"layers": []map[string]string{{"digest": "sha256:stmt"}},
+	})
+	statementJSON, _ := json.Marshal(map[string]any{
+		"predicate": map[string]any{
+			"runDetails": map[string]any{
+				"metadata": map[string]any{
+					"buildkit_metadata": map[string]any{
+						"source": map[string]any{
+							"infos": []map[string]string{{"data": encoded}},
+						},
+					},
+				},
+			},
+		},
+	})
+
+	src := &fakeBlobSource{
+		index: indexJSON,
+		blobs: map[string][]byte{
+			"sha256:outer":  nestedIndexJSON,
+			"sha256:attest": attestationJSON,
+			"sha256:stmt":   statementJSON,
+		},
+	}
+
+	result, err := NewWorkflow().ExtractDockerfileFromSource(context.Background(), src)
+	require.NoError(t, err)
+	require.Equal(t, expected, result.Dockerfile)
+	require.Equal(t, "sha256:attest", result.AttestationManifestDigest)
+}
+
+func TestDecodeDockerfileRawBase64(t *testing.T) {
+	// Raw base64 omits padding; StdEncoding rejects it, RawStdEncoding accepts it.
+	rawEncoded := base64.RawStdEncoding.EncodeToString([]byte("FROM scratch\n"))
+
+	indexJSON, _ := json.Marshal(map[string]any{
+		"manifests": []map[string]any{
+			{
+				"digest": "sha256:a1",
+				"annotations": map[string]string{
+					"vnd.docker.reference.type": attestationManifestType,
+				},
+			},
+		},
+	})
+	attestationJSON, _ := json.Marshal(map[string]any{
+		"layers": []map[string]string{{"digest": "sha256:s1"}},
+	})
+	statementJSON, _ := json.Marshal(map[string]any{
+		"predicate": map[string]any{
+			"runDetails": map[string]any{
+				"metadata": map[string]any{
+					"buildkit_metadata": map[string]any{
+						"source": map[string]any{
+							"infos": []map[string]string{{"data": rawEncoded}},
+						},
+					},
+				},
+			},
+		},
+	})
+
+	src := &fakeBlobSource{
+		index: indexJSON,
+		blobs: map[string][]byte{
+			"sha256:a1": attestationJSON,
+			"sha256:s1": statementJSON,
+		},
+	}
+
+	result, err := NewWorkflow().ExtractDockerfileFromSource(context.Background(), src)
+	require.NoError(t, err)
+	require.Equal(t, "FROM scratch\n", result.Dockerfile)
+}
+
+func TestExtractDockerfileBlobNotInArchive(t *testing.T) {
+	indexJSON, _ := json.Marshal(map[string]any{
+		"manifests": []map[string]any{
+			{
+				"digest": "sha256:missing",
+				"annotations": map[string]string{
+					"vnd.docker.reference.type": attestationManifestType,
+				},
+			},
+		},
+	})
+
+	src := &fakeBlobSource{
+		index: indexJSON,
+		blobs: map[string][]byte{},
+	}
+
+	_, err := NewWorkflow().ExtractDockerfileFromSource(context.Background(), src)
+	require.Error(t, err)
+}
