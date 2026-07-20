@@ -1,13 +1,36 @@
 <div class="dockerfile-optimization-container">
-    <div class="action-row">
-        <button
-            class="btn btn-primary"
-            [disabled]="loading"
-            (click)="optimize()">
-            <clr-spinner *ngIf="loading" [clrSmall]="true"></clr-spinner>
-            <span>{{ 'REPOSITORY.OPTIMIZE_DOCKERFILE' | translate }}</span>
-        </button>
+
+    <div *ngIf="loadingCached" class="spinner-container">
+        <clr-spinner></clr-spinner>
     </div>
+
+    <ng-container *ngIf="!loadingCached && result">
+        <div class="clr-row comparison-panels">
+            <div class="clr-col-6">
+                <h5>{{ 'REPOSITORY.DOCKERFILE_ORIGINAL' | translate }}</h5>
+                <pre class="dockerfile-pre">{{ result.dockerfile }}</pre>
+            </div>
+            <div class="clr-col-6">
+                <h5>{{ 'REPOSITORY.DOCKERFILE_OPTIMIZED' | translate }}</h5>
+                <pre class="dockerfile-pre">{{ result.optimized_dockerfile }}</pre>
+            </div>
+        </div>
+    </ng-container>
+
+    <ng-container *ngIf="!loadingCached && showButton && !result">
+        <div class="action-row">
+            <button
+                class="btn btn-primary"
+                [disabled]="loading"
+                (click)="optimize()">
+                <clr-spinner *ngIf="loading" [clrSmall]="true"></clr-spinner>
+                <span>{{ 'REPOSITORY.OPTIMIZE_DOCKERFILE' | translate }}</span>
+            </button>
+        </div>
+        <p *ngIf="!loading" class="hint-text">
+            {{ 'REPOSITORY.DOCKERFILE_HINT' | translate }}
+        </p>
+    </ng-container>
 
     <div *ngIf="errorMessage" class="alert alert-danger" role="alert">
         <div class="alert-items">
@@ -20,18 +43,4 @@
         </div>
     </div>
 
-    <div *ngIf="result" class="clr-row comparison-panels">
-        <div class="clr-col-6">
-            <h5>{{ 'REPOSITORY.DOCKERFILE_ORIGINAL' | translate }}</h5>
-            <pre class="dockerfile-pre">{{ result.dockerfile }}</pre>
-        </div>
-        <div class="clr-col-6">
-            <h5>{{ 'REPOSITORY.DOCKERFILE_OPTIMIZED' | translate }}</h5>
-            <pre class="dockerfile-pre">{{ result.optimized_dockerfile }}</pre>
-        </div>
-    </div>
-
-    <p *ngIf="!loading && !result && !errorMessage" class="hint-text">
-        {{ 'REPOSITORY.DOCKERFILE_HINT' | translate }}
-    </p>
 </div>

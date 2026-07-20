@@ -1359,6 +1359,36 @@ paths:
         '500':
           $ref: '#/responses/500'
   /projects/{project_name}/repositories/{repository_name}/artifacts/{reference}/dockerfile/optimize:
+    get:
+      summary: Get cached Dockerfile optimization for an artifact
+      description: Returns the persisted optimization result if it has been previously computed, otherwise 404.
+      tags:
+        - dockerfile
+      operationId: getDockerfileOptimization
+      parameters:
+        - $ref: '#/parameters/requestId'
+        - $ref: '#/parameters/projectName'
+        - $ref: '#/parameters/repositoryName'
+        - $ref: '#/parameters/reference'
+      responses:
+        '200':
+          description: Cached optimization found
+          headers:
+            X-Request-Id:
+              description: The ID of the corresponding request for the response
+              type: string
+          schema:
+            $ref: '#/definitions/DockerfileOptimization'
+        '400':
+          $ref: '#/responses/400'
+        '401':
+          $ref: '#/responses/401'
+        '403':
+          $ref: '#/responses/403'
+        '404':
+          $ref: '#/responses/404'
+        '500':
+          $ref: '#/responses/500'
     post:
       summary: Optimize the Dockerfile for an artifact
       description: Extract the original Dockerfile embedded in a BuildKit provenance attestation and return an LLM-optimized version alongside the original. Only works for images built with BuildKit provenance attestations.
@@ -6745,6 +6775,10 @@ definitions:
       statement_digest:
         type: string
         description: The digest of the in-toto statement blob that contained the Dockerfile source
+      created_at:
+        type: string
+        format: date-time
+        description: Timestamp when the optimization was first computed and persisted
   Error:
     description: a model for all the error response coming from harbor
     type: object

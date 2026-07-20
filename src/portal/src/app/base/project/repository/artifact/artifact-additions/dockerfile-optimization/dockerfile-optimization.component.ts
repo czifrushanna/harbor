@@ -11,7 +11,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-import { Component, Input } from '@angular/core';
+import { Component, Input, OnInit } from '@angular/core';
 import { finalize } from 'rxjs/operators';
 import { DockerfileService } from '../../../../../../../../ng-swagger-gen/services/dockerfile.service';
 import { DockerfileOptimization } from '../../../../../../../../ng-swagger-gen/models/dockerfile-optimization';
@@ -21,19 +21,46 @@ import { DockerfileOptimization } from '../../../../../../../../ng-swagger-gen/m
     templateUrl: './dockerfile-optimization.component.html',
     styleUrls: ['./dockerfile-optimization.component.scss'],
 })
-export class DockerfileOptimizationComponent {
+export class DockerfileOptimizationComponent implements OnInit {
     @Input() projectName: string;
     @Input() repoName: string;
     @Input() digest: string;
 
     loading = false;
+    loadingCached = false;
     result: DockerfileOptimization = null;
     errorMessage: string = null;
+    showButton = false;
 
     constructor(private dockerfileService: DockerfileService) {}
 
+    ngOnInit(): void {
+        this.loadingCached = true;
+        this.dockerfileService
+            .getDockerfileOptimization({
+                projectName: this.projectName,
+                repositoryName: this.repoName,
+                reference: this.digest,
+            })
+            .pipe(finalize(() => (this.loadingCached = false)))
+            .subscribe({
+                next: res => {
+                    this.result = res;
+                },
+                error: err => {
+                    if (err?.status === 404) {
+                        this.showButton = true;
+                    } else {
+                        this.errorMessage =
+                            err?.error?.errors?.[0]?.message ||
+                            err?.message ||
+                            'Failed to check for cached optimization';
+                    }
+                },
+            });
+    }
+
     optimize(): void {
-        this.result = null;
         this.errorMessage = null;
         this.loading = true;
         this.dockerfileService
@@ -46,6 +73,7 @@ export class DockerfileOptimizationComponent {
             .subscribe({
                 next: res => {
                     this.result = res;
+                    this.showButton = false;
                 },
                 error: err => {
                     const msg =
