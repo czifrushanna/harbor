@@ -1,0 +1,66 @@
+# rec-engine optimizer adapter Deployment.
+#
+# Prerequisite — the LLM gateway API key lives on the adapter, not on harbor-core:
+#   kubectl create secret generic llmgw-secret \
+#     --from-literal=LLMGW_API_KEY=<your-key> \
+#     -n harbor
+#
+# Apply with:
+#   kubectl apply -f make/k8s/rec-engine-adapter/ -n harbor
+#
+# Note: single replica by design — the adapter keeps in-flight jobs in memory.
+# Scale-out requires a Redis-backed job store first (see the adapter plan doc).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rec-engine-adapter
+  labels:
+    app: rec-engine-adapter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rec-engine-adapter
+  template:
+    metadata:
+      labels:
+        app: rec-engine-adapter
+    spec:
+      containers:
+        - name: rec-engine-adapter
+          image: registry.cern.ch/harbor-dev-hczifrus/rec-engine/rec-engine-adapter:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: LLMGW_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: llmgw-secret
+                  key: LLMGW_API_KEY
+            # Uncomment to override the defaults baked into the binary:
+            # - name: LLMGW_API_BASE_URL
+            #   value: "https://llmgw-litellm.web.cern.ch/v1/chat/completions"
+            # - name: LLMGW_MODEL
+            #   value: "llama-3.1-8b-instruct"
+            # - name: OPTIMIZER_ADAPTER_MAX_CONCURRENCY
+            #   value: "4"
+          readinessProbe:
+            httpGet:
+              path: /probe/healthy
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /probe/healthy
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 512Mi

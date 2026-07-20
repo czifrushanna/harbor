@@ -37,6 +37,7 @@ func New() http.Handler {
 		AuditlogAPI:           newAuditLogAPI(),
 		ScannerAPI:            newScannerAPI(),
 		DockerfileAPI:         newDockerfileAPI(),
+		OptimizerAPI:          newOptimizerAPI(),
 		ScanAPI:               newScanAPI(),
 		ScanAllAPI:            newScanAllAPI(),
 		SearchAPI:             newSearchAPI(),

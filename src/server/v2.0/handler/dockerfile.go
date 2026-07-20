@@ -17,37 +17,31 @@ package handler
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/go-openapi/runtime/middleware"
 	"github.com/go-openapi/strfmt"
 
 	"github.com/goharbor/harbor/src/common/rbac"
 	"github.com/goharbor/harbor/src/controller/artifact"
-	buildkitdockerfilectl "github.com/goharbor/harbor/src/controller/buildkitdockerfile"
-	"github.com/goharbor/harbor/src/lib/errors"
-	buildkitdockerfilepkg "github.com/goharbor/harbor/src/pkg/buildkitdockerfile"
+	"github.com/goharbor/harbor/src/controller/optimizer"
 	dockerfileoptdao "github.com/goharbor/harbor/src/pkg/dockerfileoptimization/dao"
-	"github.com/goharbor/harbor/src/pkg/registry"
 	"github.com/goharbor/harbor/src/server/v2.0/models"
 	operation "github.com/goharbor/harbor/src/server/v2.0/restapi/operations/dockerfile"
 )
 
 func newDockerfileAPI() *dockerfileAPI {
 	return &dockerfileAPI{
-		artCtl:      artifact.Ctl,
-		dockerCtl:   buildkitdockerfilectl.DefaultController,
-		registryCli: registry.Cli,
-		optDAO:      dockerfileoptdao.New(),
+		artCtl:       artifact.Ctl,
+		optimizerCtl: optimizer.DefaultController,
+		optDAO:       dockerfileoptdao.New(),
 	}
 }
 
 type dockerfileAPI struct {
 	BaseAPI
-	artCtl      artifact.Controller
-	dockerCtl   buildkitdockerfilectl.Controller
-	registryCli registry.Client
-	optDAO      dockerfileoptdao.DAO
+	artCtl       artifact.Controller
+	optimizerCtl optimizer.Controller
+	optDAO       dockerfileoptdao.DAO
 }
 
 func (d *dockerfileAPI) Prepare(ctx context.Context, _ string, params any) middleware.Responder {
@@ -57,6 +51,9 @@ func (d *dockerfileAPI) Prepare(ctx context.Context, _ string, params any) middl
 	return nil
 }
 
+// OptimizeDockerfile starts an asynchronous optimization through the registered
+// optimizer adapter and returns 202 with the pending record. The extraction and LLM
+// work happens in the adapter service; poll the GET endpoint for the result.
 func (d *dockerfileAPI) OptimizeDockerfile(ctx context.Context, params operation.OptimizeDockerfileParams) middleware.Responder {
 	if err := d.RequireProjectAccess(ctx, params.ProjectName, rbac.ActionRead, rbac.ResourceArtifact); err != nil {
 		return d.SendError(ctx, err)
@@ -68,44 +65,21 @@ func (d *dockerfileAPI) OptimizeDockerfile(ctx context.Context, params operation
 		return d.SendError(ctx, err)
 	}
 
-	src := &buildkitdockerfilepkg.RegistryBlobSource{
-		Client:     d.registryCli,
-		Repository: art.RepositoryName,
-		Reference:  art.Digest,
+	var tag string
+	if art.Digest != params.Reference {
+		tag = params.Reference
 	}
 
-	result, err := d.dockerCtl.ExtractDockerfileFromSource(ctx, src)
-	if err != nil {
-		if strings.Contains(err.Error(), "attestation manifest not found") {
-			return d.SendError(ctx, errors.New(nil).WithCode(errors.PreconditionCode).
-				WithMessage("no BuildKit provenance attestation found for this image"))
-		}
+	if _, err := d.optimizerCtl.Optimize(ctx, art, tag); err != nil {
 		return d.SendError(ctx, err)
 	}
 
-	optimized, err := buildkitdockerfilepkg.OptimizeWithEnvConfig(ctx, result.Dockerfile)
+	rec, err := d.optDAO.GetByArtifact(ctx, art.RepositoryName, art.Digest)
 	if err != nil {
 		return d.SendError(ctx, err)
 	}
 
-	rec := &dockerfileoptdao.DockerfileOptimization{
-		RepositoryName:            art.RepositoryName,
-		ArtifactDigest:            art.Digest,
-		Dockerfile:                result.Dockerfile,
-		OptimizedDockerfile:       optimized,
-		AttestationManifestDigest: result.AttestationManifestDigest,
-		StatementDigest:           result.StatementDigest,
-	}
-	if err := d.optDAO.Upsert(ctx, rec); err != nil {
-		return d.SendError(ctx, err)
-	}
-
-	return operation.NewOptimizeDockerfileOK().WithPayload(&models.DockerfileOptimization{
-		Dockerfile:                result.Dockerfile,
-		OptimizedDockerfile:       optimized,
-		AttestationManifestDigest: result.AttestationManifestDigest,
-		StatementDigest:           result.StatementDigest,
-	})
+	return operation.NewOptimizeDockerfileAccepted().WithPayload(toDockerfileOptimizationModel(rec))
 }
 
 func (d *dockerfileAPI) GetDockerfileOptimization(ctx context.Context, params operation.GetDockerfileOptimizationParams) middleware.Responder {
@@ -124,11 +98,18 @@ func (d *dockerfileAPI) GetDockerfileOptimization(ctx context.Context, params op
 		return d.SendError(ctx, err)
 	}
 
-	return operation.NewGetDockerfileOptimizationOK().WithPayload(&models.DockerfileOptimization{
+	return operation.NewGetDockerfileOptimizationOK().WithPayload(toDockerfileOptimizationModel(rec))
+}
+
+func toDockerfileOptimizationModel(rec *dockerfileoptdao.DockerfileOptimization) *models.DockerfileOptimization {
+	return &models.DockerfileOptimization{
 		Dockerfile:                rec.Dockerfile,
 		OptimizedDockerfile:       rec.OptimizedDockerfile,
 		AttestationManifestDigest: rec.AttestationManifestDigest,
 		StatementDigest:           rec.StatementDigest,
+		Status:                    rec.Status,
+		Error:                     rec.Error,
 		CreatedAt:                 strfmt.DateTime(rec.CreatedAt),
-	})
+		UpdateTime:                strfmt.DateTime(rec.UpdateTime),
+	}
 }

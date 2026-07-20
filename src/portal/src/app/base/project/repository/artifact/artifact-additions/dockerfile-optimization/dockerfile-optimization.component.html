@@ -17,7 +17,16 @@
         </div>
     </ng-container>
 
-    <ng-container *ngIf="!loadingCached && showButton && !result">
+    <ng-container *ngIf="!loadingCached && inProgress">
+        <div class="action-row">
+            <clr-spinner [clrSmall]="true"></clr-spinner>
+            <span class="hint-text">{{
+                'REPOSITORY.DOCKERFILE_IN_PROGRESS' | translate
+            }}</span>
+        </div>
+    </ng-container>
+
+    <ng-container *ngIf="!loadingCached && !inProgress && showButton && !result">
         <div class="action-row">
             <button
                 class="btn btn-primary"

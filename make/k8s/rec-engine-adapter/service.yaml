@@ -1,0 +1,15 @@
+# Service for the rec-engine optimizer adapter. harbor-core reaches it at
+# http://rec-engine-adapter:8080 (the default of REC_ENGINE_ADAPTER_URL).
+apiVersion: v1
+kind: Service
+metadata:
+  name: rec-engine-adapter
+  labels:
+    app: rec-engine-adapter
+spec:
+  selector:
+    app: rec-engine-adapter
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http

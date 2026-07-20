@@ -17,8 +17,6 @@ package handler
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -29,30 +27,32 @@ import (
 
 	"github.com/goharbor/harbor/src/common/security"
 	"github.com/goharbor/harbor/src/controller/artifact"
-	buildkitdockerfilectl "github.com/goharbor/harbor/src/controller/buildkitdockerfile"
+	"github.com/goharbor/harbor/src/controller/optimizer"
 	"github.com/goharbor/harbor/src/controller/project"
 	liberrors "github.com/goharbor/harbor/src/lib/errors"
 	dockerfileoptdao "github.com/goharbor/harbor/src/pkg/dockerfileoptimization/dao"
 	operation "github.com/goharbor/harbor/src/server/v2.0/restapi/operations/dockerfile"
+	securitytesting "github.com/goharbor/harbor/src/testing/common/security"
 	artifacttesting "github.com/goharbor/harbor/src/testing/controller/artifact"
 	"github.com/goharbor/harbor/src/testing/mock"
-	securitytesting "github.com/goharbor/harbor/src/testing/common/security"
 )
 
-// stubDockerfileCtl is a simple in-test stub for buildkitdockerfilectl.Controller.
-type stubDockerfileCtl struct {
-	result *buildkitdockerfilectl.Result
-	err    error
+// stubOptimizerCtl is a simple in-test stub for optimizer.Controller. Only the
+// Optimize method is used by the dockerfile handler; the embedded interface
+// panics on any other call.
+type stubOptimizerCtl struct {
+	optimizer.Controller
+	executionID int64
+	err         error
+	// captured arguments
+	optimizedArtifact *artifact.Artifact
+	optimizedTag      string
 }
 
-func (s *stubDockerfileCtl) ExtractDockerfile(_ context.Context, _ string) (*buildkitdockerfilectl.Result, error) {
-	return s.result, s.err
-}
-func (s *stubDockerfileCtl) ExtractDockerfileFromReader(_ context.Context, _ io.Reader) (*buildkitdockerfilectl.Result, error) {
-	return s.result, s.err
-}
-func (s *stubDockerfileCtl) ExtractDockerfileFromSource(_ context.Context, _ buildkitdockerfilectl.BlobSource) (*buildkitdockerfilectl.Result, error) {
-	return s.result, s.err
+func (s *stubOptimizerCtl) Optimize(_ context.Context, art *artifact.Artifact, tag string) (int64, error) {
+	s.optimizedArtifact = art
+	s.optimizedTag = tag
+	return s.executionID, s.err
 }
 
 // stubOptDAO is a simple in-test stub for dockerfileoptdao.DAO.
@@ -67,8 +67,13 @@ func (s *stubOptDAO) Upsert(_ context.Context, rec *dockerfileoptdao.DockerfileO
 	s.upsertedRec = rec
 	return s.upsertErr
 }
+
 func (s *stubOptDAO) GetByArtifact(_ context.Context, _, _ string) (*dockerfileoptdao.DockerfileOptimization, error) {
 	return s.getResult, s.getErr
+}
+
+func (s *stubOptDAO) UpdateStatus(_ context.Context, _, _, _, _ string) error {
+	return nil
 }
 
 // ctxWithSecurity returns a context with a mock security context that grants
@@ -88,33 +93,38 @@ func ctxWithSecurity() context.Context {
 // newTestDockerfileAPI creates a dockerfileAPI with stubbed dependencies.
 func newTestDockerfileAPI(
 	artCtl artifact.Controller,
-	dockerCtl buildkitdockerfilectl.Controller,
+	optimizerCtl optimizer.Controller,
 	optDAO dockerfileoptdao.DAO,
 ) *dockerfileAPI {
 	return &dockerfileAPI{
-		artCtl:    artCtl,
-		dockerCtl: dockerCtl,
-		optDAO:    optDAO,
+		artCtl:       artCtl,
+		optimizerCtl: optimizerCtl,
+		optDAO:       optDAO,
 	}
+}
+
+func testArtifact() *artifact.Artifact {
+	art := &artifact.Artifact{}
+	art.RepositoryName = "library/myrepo"
+	art.Digest = "sha256:abc123"
+	return art
 }
 
 func TestGetDockerfileOptimization_HappyPath(t *testing.T) {
 	artCtl := &artifacttesting.Controller{}
-	art := &artifact.Artifact{}
-	art.RepositoryName = "library/myrepo"
-	art.Digest = "sha256:abc123"
-	mock.OnAnything(artCtl, "GetByReference").Return(art, nil).Once()
+	mock.OnAnything(artCtl, "GetByReference").Return(testArtifact(), nil).Once()
 
 	ts := time.Now().Truncate(time.Second)
 	optDAO := &stubOptDAO{
 		getResult: &dockerfileoptdao.DockerfileOptimization{
 			Dockerfile:          "FROM alpine",
 			OptimizedDockerfile: "FROM alpine:3.21",
+			Status:              dockerfileoptdao.StatusSuccess,
 			CreatedAt:           ts,
 		},
 	}
 
-	api := newTestDockerfileAPI(artCtl, &stubDockerfileCtl{}, optDAO)
+	api := newTestDockerfileAPI(artCtl, &stubOptimizerCtl{}, optDAO)
 	params := operation.GetDockerfileOptimizationParams{
 		HTTPRequest:    &http.Request{},
 		ProjectName:    "library",
@@ -127,20 +137,27 @@ func TestGetDockerfileOptimization_HappyPath(t *testing.T) {
 	rw := httptest.NewRecorder()
 	responder.WriteResponse(rw, runtime.JSONProducer())
 	require.Equal(t, 200, rw.Code)
+
+	var body struct {
+		Dockerfile          string `json:"dockerfile"`
+		OptimizedDockerfile string `json:"optimized_dockerfile"`
+		Status              string `json:"status"`
+	}
+	require.NoError(t, json.Unmarshal(rw.Body.Bytes(), &body))
+	require.Equal(t, "FROM alpine", body.Dockerfile)
+	require.Equal(t, "FROM alpine:3.21", body.OptimizedDockerfile)
+	require.Equal(t, dockerfileoptdao.StatusSuccess, body.Status)
 }
 
 func TestGetDockerfileOptimization_NotFound(t *testing.T) {
 	artCtl := &artifacttesting.Controller{}
-	art := &artifact.Artifact{}
-	art.RepositoryName = "library/myrepo"
-	art.Digest = "sha256:abc123"
-	mock.OnAnything(artCtl, "GetByReference").Return(art, nil).Once()
+	mock.OnAnything(artCtl, "GetByReference").Return(testArtifact(), nil).Once()
 
 	optDAO := &stubOptDAO{
 		getErr: liberrors.New(nil).WithCode(liberrors.NotFoundCode).WithMessage("not found"),
 	}
 
-	api := newTestDockerfileAPI(artCtl, &stubDockerfileCtl{}, optDAO)
+	api := newTestDockerfileAPI(artCtl, &stubOptimizerCtl{}, optDAO)
 	params := operation.GetDockerfileOptimizationParams{
 		HTTPRequest:    &http.Request{},
 		ProjectName:    "library",
@@ -155,18 +172,69 @@ func TestGetDockerfileOptimization_NotFound(t *testing.T) {
 	require.Equal(t, 404, rw.Code)
 }
 
-func TestOptimizeDockerfile_NoAttestation(t *testing.T) {
+func TestGetDockerfileOptimization_ErrorState(t *testing.T) {
 	artCtl := &artifacttesting.Controller{}
-	art := &artifact.Artifact{}
-	art.RepositoryName = "library/myrepo"
-	art.Digest = "sha256:abc123"
-	mock.OnAnything(artCtl, "GetByReference").Return(art, nil).Once()
+	mock.OnAnything(artCtl, "GetByReference").Return(testArtifact(), nil).Once()
 
-	dockerCtl := &stubDockerfileCtl{
-		err: fmt.Errorf("attestation manifest not found in OCI index"),
+	optDAO := &stubOptDAO{
+		getResult: &dockerfileoptdao.DockerfileOptimization{
+			Status: dockerfileoptdao.StatusError,
+			Error:  "NO_ATTESTATION: attestation manifest not found",
+		},
 	}
 
-	api := newTestDockerfileAPI(artCtl, dockerCtl, &stubOptDAO{})
+	api := newTestDockerfileAPI(artCtl, &stubOptimizerCtl{}, optDAO)
+	params := operation.GetDockerfileOptimizationParams{
+		HTTPRequest:    &http.Request{},
+		ProjectName:    "library",
+		RepositoryName: "myrepo",
+		Reference:      "latest",
+	}
+
+	responder := api.GetDockerfileOptimization(ctxWithSecurity(), params)
+
+	rw := httptest.NewRecorder()
+	responder.WriteResponse(rw, runtime.JSONProducer())
+	require.Equal(t, 200, rw.Code)
+
+	var body struct {
+		Status string `json:"status"`
+		Error  string `json:"error"`
+	}
+	require.NoError(t, json.Unmarshal(rw.Body.Bytes(), &body))
+	require.Equal(t, dockerfileoptdao.StatusError, body.Status)
+	require.Contains(t, body.Error, "NO_ATTESTATION")
+}
+
+func TestOptimizeDockerfile_ArtifactNotFound(t *testing.T) {
+	artCtl := &artifacttesting.Controller{}
+	mock.OnAnything(artCtl, "GetByReference").
+		Return(nil, liberrors.NotFoundError(nil).WithMessage("artifact not found")).Once()
+
+	api := newTestDockerfileAPI(artCtl, &stubOptimizerCtl{}, &stubOptDAO{})
+	params := operation.OptimizeDockerfileParams{
+		HTTPRequest:    &http.Request{},
+		ProjectName:    "library",
+		RepositoryName: "myrepo",
+		Reference:      "latest",
+	}
+
+	responder := api.OptimizeDockerfile(ctxWithSecurity(), params)
+
+	rw := httptest.NewRecorder()
+	responder.WriteResponse(rw, runtime.JSONProducer())
+	require.Equal(t, 404, rw.Code)
+}
+
+func TestOptimizeDockerfile_NoOptimizerConfigured(t *testing.T) {
+	artCtl := &artifacttesting.Controller{}
+	mock.OnAnything(artCtl, "GetByReference").Return(testArtifact(), nil).Once()
+
+	optimizerCtl := &stubOptimizerCtl{
+		err: liberrors.PreconditionFailedError(nil).WithMessage("no optimizer adapter is configured"),
+	}
+
+	api := newTestDockerfileAPI(artCtl, optimizerCtl, &stubOptDAO{})
 	params := operation.OptimizeDockerfileParams{
 		HTTPRequest:    &http.Request{},
 		ProjectName:    "library",
@@ -181,44 +249,19 @@ func TestOptimizeDockerfile_NoAttestation(t *testing.T) {
 	require.Equal(t, 412, rw.Code)
 }
 
-func TestOptimizeDockerfile_ArtifactNotFound(t *testing.T) {
+func TestOptimizeDockerfile_Accepted(t *testing.T) {
 	artCtl := &artifacttesting.Controller{}
-	mock.OnAnything(artCtl, "GetByReference").
-		Return(nil, liberrors.NotFoundError(nil).WithMessage("artifact not found")).Once()
+	mock.OnAnything(artCtl, "GetByReference").Return(testArtifact(), nil).Once()
 
-	api := newTestDockerfileAPI(artCtl, &stubDockerfileCtl{}, &stubOptDAO{})
-	params := operation.OptimizeDockerfileParams{
-		HTTPRequest:    &http.Request{},
-		ProjectName:    "library",
-		RepositoryName: "myrepo",
-		Reference:      "latest",
-	}
-
-	responder := api.OptimizeDockerfile(ctxWithSecurity(), params)
-
-	rw := httptest.NewRecorder()
-	responder.WriteResponse(rw, runtime.JSONProducer())
-	require.Equal(t, 404, rw.Code)
-}
-
-func TestOptimizeDockerfile_LLMNotConfigured(t *testing.T) {
-	t.Setenv("LLMGW_API_KEY", "")
-
-	artCtl := &artifacttesting.Controller{}
-	art := &artifact.Artifact{}
-	art.RepositoryName = "library/myrepo"
-	art.Digest = "sha256:abc123"
-	mock.OnAnything(artCtl, "GetByReference").Return(art, nil).Once()
-
-	dockerCtl := &stubDockerfileCtl{
-		result: &buildkitdockerfilectl.Result{
-			Dockerfile:                "FROM scratch",
-			AttestationManifestDigest: "sha256:att",
-			StatementDigest:           "sha256:stmt",
+	optimizerCtl := &stubOptimizerCtl{executionID: 7}
+	optDAO := &stubOptDAO{
+		getResult: &dockerfileoptdao.DockerfileOptimization{
+			Status:      dockerfileoptdao.StatusPending,
+			ExecutionID: 7,
 		},
 	}
 
-	api := newTestDockerfileAPI(artCtl, dockerCtl, &stubOptDAO{})
+	api := newTestDockerfileAPI(artCtl, optimizerCtl, optDAO)
 	params := operation.OptimizeDockerfileParams{
 		HTTPRequest:    &http.Request{},
 		ProjectName:    "library",
@@ -230,102 +273,56 @@ func TestOptimizeDockerfile_LLMNotConfigured(t *testing.T) {
 
 	rw := httptest.NewRecorder()
 	responder.WriteResponse(rw, runtime.JSONProducer())
-	// OptimizeWithEnvConfig returns "LLM optimization is not configured" → 500
-	require.Equal(t, 500, rw.Code)
-}
+	require.Equal(t, 202, rw.Code)
 
-// fakeLLMServer starts an httptest.Server that returns a minimal SSE stream
-// containing the provided optimized Dockerfile content, then closes.
-func fakeLLMServer(t *testing.T, optimizedDockerfile string) *httptest.Server {
-	t.Helper()
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		chunk := fmt.Sprintf(`data: {"choices":[{"delta":{"content":%s}}]}`,
-			func() string { b, _ := json.Marshal(optimizedDockerfile); return string(b) }())
-		fmt.Fprintln(w, chunk)
-		fmt.Fprintln(w, "data: [DONE]")
-	}))
-}
-
-func TestOptimizeDockerfile_HappyPath(t *testing.T) {
-	const wantOptimized = "FROM alpine:3.21\nRUN apk add --no-cache bash"
-
-	srv := fakeLLMServer(t, wantOptimized)
-	defer srv.Close()
-	t.Setenv("LLMGW_API_KEY", "test-key")
-	t.Setenv("LLMGW_API_BASE_URL", srv.URL)
-
-	artCtl := &artifacttesting.Controller{}
-	art := &artifact.Artifact{}
-	art.RepositoryName = "library/myrepo"
-	art.Digest = "sha256:abc123"
-	mock.OnAnything(artCtl, "GetByReference").Return(art, nil).Once()
-
-	dockerCtl := &stubDockerfileCtl{
-		result: &buildkitdockerfilectl.Result{
-			Dockerfile:                "FROM scratch",
-			AttestationManifestDigest: "sha256:att000",
-			StatementDigest:           "sha256:stmt000",
-		},
-	}
-	optDAO := &stubOptDAO{}
-
-	api := newTestDockerfileAPI(artCtl, dockerCtl, optDAO)
-	params := operation.OptimizeDockerfileParams{
-		HTTPRequest:    &http.Request{},
-		ProjectName:    "library",
-		RepositoryName: "myrepo",
-		Reference:      "latest",
-	}
-
-	responder := api.OptimizeDockerfile(ctxWithSecurity(), params)
-
-	rw := httptest.NewRecorder()
-	responder.WriteResponse(rw, runtime.JSONProducer())
-	require.Equal(t, 200, rw.Code)
-
-	// Decode response payload.
 	var body struct {
-		Dockerfile                string `json:"dockerfile"`
-		OptimizedDockerfile       string `json:"optimized_dockerfile"`
-		AttestationManifestDigest string `json:"attestation_manifest_digest"`
-		StatementDigest           string `json:"statement_digest"`
+		Status string `json:"status"`
 	}
 	require.NoError(t, json.Unmarshal(rw.Body.Bytes(), &body))
-	require.Equal(t, "FROM scratch", body.Dockerfile)
-	require.Equal(t, wantOptimized, body.OptimizedDockerfile)
-	require.Equal(t, "sha256:att000", body.AttestationManifestDigest)
-	require.Equal(t, "sha256:stmt000", body.StatementDigest)
+	require.Equal(t, dockerfileoptdao.StatusPending, body.Status)
 
-	// Verify the DAO received the correct record for persistence.
-	require.NotNil(t, optDAO.upsertedRec)
-	require.Equal(t, "library/myrepo", optDAO.upsertedRec.RepositoryName)
-	require.Equal(t, "sha256:abc123", optDAO.upsertedRec.ArtifactDigest)
-	require.Equal(t, "FROM scratch", optDAO.upsertedRec.Dockerfile)
-	require.Equal(t, wantOptimized, optDAO.upsertedRec.OptimizedDockerfile)
+	// The tag reference is forwarded to the optimize controller.
+	require.NotNil(t, optimizerCtl.optimizedArtifact)
+	require.Equal(t, "library/myrepo", optimizerCtl.optimizedArtifact.RepositoryName)
+	require.Equal(t, "latest", optimizerCtl.optimizedTag)
 }
 
-func TestOptimizeDockerfile_UpsertError(t *testing.T) {
-	srv := fakeLLMServer(t, "FROM alpine")
-	defer srv.Close()
-	t.Setenv("LLMGW_API_KEY", "test-key")
-	t.Setenv("LLMGW_API_BASE_URL", srv.URL)
-
+func TestOptimizeDockerfile_DigestReferenceHasNoTag(t *testing.T) {
 	artCtl := &artifacttesting.Controller{}
-	art := &artifact.Artifact{}
-	art.RepositoryName = "library/myrepo"
-	art.Digest = "sha256:abc123"
+	art := testArtifact()
 	mock.OnAnything(artCtl, "GetByReference").Return(art, nil).Once()
 
-	dockerCtl := &stubDockerfileCtl{
-		result: &buildkitdockerfilectl.Result{
-			Dockerfile:                "FROM scratch",
-			AttestationManifestDigest: "sha256:att",
-			StatementDigest:           "sha256:stmt",
-		},
+	optimizerCtl := &stubOptimizerCtl{executionID: 8}
+	optDAO := &stubOptDAO{
+		getResult: &dockerfileoptdao.DockerfileOptimization{Status: dockerfileoptdao.StatusPending},
 	}
-	optDAO := &stubOptDAO{upsertErr: fmt.Errorf("db write failed")}
 
-	api := newTestDockerfileAPI(artCtl, dockerCtl, optDAO)
+	api := newTestDockerfileAPI(artCtl, optimizerCtl, optDAO)
+	params := operation.OptimizeDockerfileParams{
+		HTTPRequest:    &http.Request{},
+		ProjectName:    "library",
+		RepositoryName: "myrepo",
+		Reference:      art.Digest, // referenced by digest, not tag
+	}
+
+	responder := api.OptimizeDockerfile(ctxWithSecurity(), params)
+
+	rw := httptest.NewRecorder()
+	responder.WriteResponse(rw, runtime.JSONProducer())
+	require.Equal(t, 202, rw.Code)
+	require.Equal(t, "", optimizerCtl.optimizedTag)
+}
+
+func TestOptimizeDockerfile_RecordReadBackError(t *testing.T) {
+	artCtl := &artifacttesting.Controller{}
+	mock.OnAnything(artCtl, "GetByReference").Return(testArtifact(), nil).Once()
+
+	optimizerCtl := &stubOptimizerCtl{executionID: 9}
+	optDAO := &stubOptDAO{
+		getErr: liberrors.New(nil).WithMessage("db read failed"),
+	}
+
+	api := newTestDockerfileAPI(artCtl, optimizerCtl, optDAO)
 	params := operation.OptimizeDockerfileParams{
 		HTTPRequest:    &http.Request{},
 		ProjectName:    "library",

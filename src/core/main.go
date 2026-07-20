@@ -75,6 +75,8 @@ import (
 	"github.com/goharbor/harbor/src/pkg/notification"
 	_ "github.com/goharbor/harbor/src/pkg/notifier/topic"
 	"github.com/goharbor/harbor/src/pkg/oidc"
+	optimizerpkg "github.com/goharbor/harbor/src/pkg/optimizer"
+	optimizerdao "github.com/goharbor/harbor/src/pkg/optimizer/dao"
 	"github.com/goharbor/harbor/src/pkg/scan"
 	"github.com/goharbor/harbor/src/pkg/scan/dao/scanner"
 	_ "github.com/goharbor/harbor/src/pkg/scan/sbom"
@@ -245,6 +247,7 @@ func main() {
 
 	health.RegisterHealthCheckers()
 	registerScanners(orm.Context())
+	registerOptimizers(orm.Context())
 
 	// start global task pool, do not stop in the gracefulShutdown because it may take long time to finish.
 	gtask.DefaultPool().Start(ctx)
@@ -371,6 +374,42 @@ func getDefaultScannerName() string {
 		return trivyScanner
 	}
 	return ""
+}
+
+const recEngineOptimizer = "REC Engine"
+
+func registerOptimizers(ctx context.Context) {
+	wantedOptimizers := make([]optimizerdao.Registration, 0)
+	uninstallOptimizerNames := make([]string, 0)
+
+	if config.WithRecEngine() {
+		log.Info("Registering REC Engine optimizer")
+		wantedOptimizers = append(wantedOptimizers, optimizerdao.Registration{
+			Name:            recEngineOptimizer,
+			Description:     "The rec-engine Dockerfile optimizer adapter",
+			URL:             config.RecEngineAdapterURL(),
+			UseInternalAddr: true,
+			Immutable:       true,
+		})
+	} else {
+		log.Info("Removing REC Engine optimizer")
+		uninstallOptimizerNames = append(uninstallOptimizerNames, recEngineOptimizer)
+	}
+
+	if err := optimizerpkg.RemoveImmutableOptimizers(ctx, uninstallOptimizerNames); err != nil {
+		log.Warningf("failed to remove optimizers: %v", err)
+	}
+
+	if err := optimizerpkg.EnsureOptimizers(ctx, wantedOptimizers); err != nil {
+		log.Fatalf("failed to register optimizers: %v", err)
+	}
+
+	if config.WithRecEngine() {
+		log.Infof("Setting %s as default optimizer", recEngineOptimizer)
+		if err := optimizerpkg.EnsureDefaultOptimizer(ctx, recEngineOptimizer); err != nil {
+			log.Fatalf("failed to set default optimizer: %v", err)
+		}
+	}
 }
 
 func initSkipAuditDBbyEnv(ctx context.Context) error {

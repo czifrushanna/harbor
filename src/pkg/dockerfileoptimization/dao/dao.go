@@ -16,6 +16,9 @@ package dao
 
 import (
 	"context"
+	"time"
+
+	beegoorm "github.com/beego/beego/v2/client/orm"
 
 	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/lib/orm"
@@ -29,6 +32,9 @@ type DAO interface {
 	// GetByArtifact returns the record for (repositoryName, artifactDigest),
 	// or a NotFoundError if none exists.
 	GetByArtifact(ctx context.Context, repositoryName, artifactDigest string) (*DockerfileOptimization, error)
+	// UpdateStatus sets the status and error message of the record for
+	// (repositoryName, artifactDigest) without touching its content columns.
+	UpdateStatus(ctx context.Context, repositoryName, artifactDigest, status, errMsg string) error
 }
 
 // New returns an instance of the default DAO.
@@ -45,6 +51,29 @@ func (d *dao) Upsert(ctx context.Context, rec *DockerfileOptimization) error {
 	}
 	_, err = ormer.InsertOrUpdate(rec, "repository_name, artifact_digest")
 	return err
+}
+
+func (d *dao) UpdateStatus(ctx context.Context, repositoryName, artifactDigest, status, errMsg string) error {
+	ormer, err := orm.FromContext(ctx)
+	if err != nil {
+		return err
+	}
+	count, err := ormer.QueryTable(&DockerfileOptimization{}).
+		Filter("repository_name", repositoryName).
+		Filter("artifact_digest", artifactDigest).
+		Update(beegoorm.Params{
+			"status":      status,
+			"error":       errMsg,
+			"update_time": time.Now(),
+		})
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		return errors.New(nil).WithCode(errors.NotFoundCode).
+			WithMessagef("no dockerfile optimization found for artifact %s in %s", artifactDigest, repositoryName)
+	}
+	return nil
 }
 
 func (d *dao) GetByArtifact(ctx context.Context, repositoryName, artifactDigest string) (*DockerfileOptimization, error) {

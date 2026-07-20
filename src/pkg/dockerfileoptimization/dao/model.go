@@ -24,6 +24,15 @@ func init() {
 	orm.RegisterModel(&DockerfileOptimization{})
 }
 
+// Status values of an optimization record. Rows are created as Pending when the
+// optimize job is launched and move to a terminal state when the adapter reports back.
+const (
+	StatusPending = "Pending"
+	StatusRunning = "Running"
+	StatusSuccess = "Success"
+	StatusError   = "Error"
+)
+
 // DockerfileOptimization holds the persisted result of a Dockerfile extraction + LLM optimization.
 type DockerfileOptimization struct {
 	ID                        int64     `orm:"pk;auto;column(id)"`
@@ -33,7 +42,12 @@ type DockerfileOptimization struct {
 	OptimizedDockerfile       string    `orm:"column(optimized_dockerfile)"`
 	AttestationManifestDigest string    `orm:"column(attestation_manifest_digest)"`
 	StatementDigest           string    `orm:"column(statement_digest)"`
+	Status                    string    `orm:"column(status)"`
+	Error                     string    `orm:"column(error)"`
+	RegistrationUUID          string    `orm:"column(registration_uuid)"`
+	ExecutionID               int64     `orm:"column(execution_id)"`
 	CreatedAt                 time.Time `orm:"column(created_at);auto_now_add"`
+	UpdateTime                time.Time `orm:"column(update_time);auto_now"`
 }
 
 // TableName returns the database table name.

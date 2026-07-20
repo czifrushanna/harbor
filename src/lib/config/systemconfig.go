@@ -186,6 +186,12 @@ func WithTrivy() bool {
 	return DefaultMgr().Get(backgroundCtx, common.WithTrivy).GetBool()
 }
 
+// WithRecEngine returns a bool value to indicate if Harbor's deployed with the
+// rec-engine optimizer adapter.
+func WithRecEngine() bool {
+	return DefaultMgr().Get(backgroundCtx, common.WithRecEngine).GetBool()
+}
+
 // ExtEndpoint returns the external URL of Harbor: protocol://host:port
 func ExtEndpoint() (string, error) {
 	return DefaultMgr().Get(backgroundCtx, common.ExtEndpoint).GetString(), nil
@@ -278,6 +284,11 @@ func InternalTokenServiceEndpoint() string {
 // TrivyAdapterURL returns the endpoint URL of a Trivy adapter instance, by default it's the one deployed within Harbor.
 func TrivyAdapterURL() string {
 	return DefaultMgr().Get(backgroundCtx, common.TrivyAdapterURL).GetString()
+}
+
+// RecEngineAdapterURL returns the endpoint URL of the rec-engine optimizer adapter instance.
+func RecEngineAdapterURL() string {
+	return DefaultMgr().Get(backgroundCtx, common.RecEngineAdapterURL).GetString()
 }
 
 // Metric returns the overall metric settings

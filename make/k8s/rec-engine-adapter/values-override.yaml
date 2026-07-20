@@ -1,0 +1,20 @@
+# Helm values override enabling the rec-engine optimizer on harbor-core.
+# Pass alongside the main values.yaml on every helm upgrade:
+#
+#   helm upgrade <release-name> harbor/harbor \
+#     -n harbor \
+#     -f values.yaml \
+#     -f make/k8s/rec-engine-adapter/values-override.yaml \
+#     --set core.image.repository=... --set core.image.tag=<tag> \
+#     --set jobservice.image.repository=... --set jobservice.image.tag=<tag> \
+#     --force-conflicts
+#
+# WITH_REC_ENGINE makes core auto-register the immutable default "REC Engine"
+# optimizer at startup, pointing at the rec-engine-adapter Service.
+# LLMGW_API_KEY is NOT needed on core anymore — it lives on the adapter Deployment.
+core:
+  extraEnvVars:
+    - name: WITH_REC_ENGINE
+      value: "true"
+    - name: REC_ENGINE_ADAPTER_URL
+      value: "http://rec-engine-adapter:8080"
