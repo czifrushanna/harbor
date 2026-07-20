@@ -16,11 +16,14 @@ package api
 
 import (
 	"context"
+	"encoding/json"
+	"io"
 
 	o "github.com/beego/beego/v2/client/orm"
 
 	"github.com/goharbor/harbor/src/common"
 	"github.com/goharbor/harbor/src/common/models"
+	buildkitdockerfilectl "github.com/goharbor/harbor/src/controller/buildkitdockerfile"
 	"github.com/goharbor/harbor/src/controller/quota"
 	"github.com/goharbor/harbor/src/controller/user"
 	"github.com/goharbor/harbor/src/core/auth"
@@ -33,6 +36,18 @@ import (
 // InternalAPI handles request of harbor admin...
 type InternalAPI struct {
 	BaseController
+}
+
+var buildkitDockerfileCtl buildkitdockerfilectl.Controller = buildkitdockerfilectl.DefaultController
+
+type buildkitDockerfileExtractRequest struct {
+	OCIArchivePath string `json:"oci_archive_path"`
+}
+
+type buildkitDockerfileExtractResponse struct {
+	Dockerfile                string `json:"dockerfile"`
+	AttestationManifestDigest string `json:"attestation_manifest_digest"`
+	StatementDigest           string `json:"statement_digest"`
 }
 
 // Prepare validates the URL and parms
@@ -70,6 +85,39 @@ func (ia *InternalAPI) RenameAdmin() {
 		log.Errorf("failed to destroy session for admin user, error: %v", err)
 		return
 	}
+}
+
+// ExtractBuildkitDockerfile extracts a Dockerfile from a BuildKit-enabled OCI archive.
+func (ia *InternalAPI) ExtractBuildkitDockerfile() {
+	ctx := ia.Ctx.Request.Context()
+	defer ia.Ctx.Request.Body.Close()
+
+	req := &buildkitDockerfileExtractRequest{}
+	body, err := io.ReadAll(ia.Ctx.Request.Body)
+	if err != nil {
+		ia.SendError(errors.BadRequestError(nil).WithMessage("failed to read request body"))
+		return
+	}
+	if err := json.Unmarshal(body, req); err != nil {
+		ia.SendError(errors.BadRequestError(nil).WithMessage(err.Error()))
+		return
+	}
+	if len(req.OCIArchivePath) == 0 {
+		ia.SendError(errors.BadRequestError(nil).WithMessage("oci_archive_path is required"))
+		return
+	}
+
+	result, err := buildkitDockerfileCtl.ExtractDockerfile(ctx, req.OCIArchivePath)
+	if err != nil {
+		ia.SendError(err)
+		return
+	}
+
+	ia.WriteJSONData(&buildkitDockerfileExtractResponse{
+		Dockerfile:                result.Dockerfile,
+		AttestationManifestDigest: result.AttestationManifestDigest,
+		StatementDigest:           result.StatementDigest,
+	})
 }
 
 // SyncQuota ...

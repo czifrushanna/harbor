@@ -7,7 +7,7 @@ import (
     "os"
     "path/filepath"
 
-    "github.com/goharbor/harbor/src/pkg/buildkitdockerfile"
+    buildkitdockerfilectl "github.com/goharbor/harbor/src/controller/buildkitdockerfile"
 )
 
 func main() {
@@ -27,8 +27,8 @@ func main() {
         os.Exit(2)
     }
 
-    wf := buildkitdockerfile.NewWorkflow()
-    res, err := wf.ExtractDockerfile(context.Background(), *input)
+    ctl := buildkitdockerfilectl.DefaultController
+    res, err := ctl.ExtractDockerfile(context.Background(), *input)
     if err != nil {
         fmt.Fprintf(os.Stderr, "failed to extract Dockerfile: %v\n", err)
         os.Exit(1)

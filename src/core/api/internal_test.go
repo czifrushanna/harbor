@@ -15,8 +15,12 @@
 package api
 
 import (
+	"context"
+	"encoding/json"
 	"net/http"
 	"testing"
+
+	buildkitdockerfilectl "github.com/goharbor/harbor/src/controller/buildkitdockerfile"
 )
 
 // cannot verify the real scenario here
@@ -50,4 +54,76 @@ func TestSyncQuota(t *testing.T) {
 		},
 	}
 	runCodeCheckingCases(t, cases...)
+}
+
+func TestExtractBuildkitDockerfile(t *testing.T) {
+	oldCtl := buildkitDockerfileCtl
+	t.Cleanup(func() {
+		buildkitDockerfileCtl = oldCtl
+	})
+
+	buildkitDockerfileCtl = &stubBuildkitDockerfileController{
+		result: &buildkitdockerfilectl.Result{
+			Dockerfile:                "FROM scratch\n",
+			AttestationManifestDigest: "sha256:attestation",
+			StatementDigest:           "sha256:statement",
+		},
+	}
+
+	cases := []*codeCheckingCase{
+		{
+			request: &testingRequest{
+				method: http.MethodPost,
+				url:    "/api/internal/buildkitdockerfile/extract",
+			},
+			code: http.StatusUnauthorized,
+		},
+		{
+			request: &testingRequest{
+				method:     http.MethodPost,
+				url:        "/api/internal/buildkitdockerfile/extract",
+				credential: nonSysAdmin,
+			},
+			code: http.StatusForbidden,
+		},
+	}
+	runCodeCheckingCases(t, cases...)
+
+	resp, err := handle(&testingRequest{
+		method: http.MethodPost,
+		url:    "/api/internal/buildkitdockerfile/extract",
+		bodyJSON: map[string]any{
+			"oci_archive_path": "/tmp/image.oci",
+		},
+		credential: sysAdmin,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Code != http.StatusOK {
+		t.Fatalf("unexpected status code %d: %s", resp.Code, resp.Body.String())
+	}
+
+	var payload buildkitDockerfileExtractResponse
+	if err := json.Unmarshal(resp.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Dockerfile != "FROM scratch\n" {
+		t.Fatalf("unexpected dockerfile %q", payload.Dockerfile)
+	}
+	if payload.AttestationManifestDigest != "sha256:attestation" {
+		t.Fatalf("unexpected attestation digest %q", payload.AttestationManifestDigest)
+	}
+	if payload.StatementDigest != "sha256:statement" {
+		t.Fatalf("unexpected statement digest %q", payload.StatementDigest)
+	}
+}
+
+type stubBuildkitDockerfileController struct {
+	result *buildkitdockerfilectl.Result
+	err    error
+}
+
+func (s *stubBuildkitDockerfileController) ExtractDockerfile(_ context.Context, _ string) (*buildkitdockerfilectl.Result, error) {
+	return s.result, s.err
 }

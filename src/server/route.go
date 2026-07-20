@@ -46,6 +46,7 @@ func registerRoutes() {
 	web.Router(common.AuthProxyRedirectPath, &controllers.AuthProxyController{}, "get:HandleRedirect")
 
 	web.Router("/api/internal/renameadmin", &api.InternalAPI{}, "post:RenameAdmin")
+	web.Router("/api/internal/buildkitdockerfile/extract", &api.InternalAPI{}, "post:ExtractBuildkitDockerfile")
 	web.Router("/api/internal/syncquota", &api.InternalAPI{}, "post:SyncQuota")
 
 	router.NewRoute().Method(http.MethodPost).Path("/service/notifications/jobs/adminjob/:id([0-9]+)").Handler(handler.NewJobStatusHandler())         // legacy job status hook endpoint for adminjob
