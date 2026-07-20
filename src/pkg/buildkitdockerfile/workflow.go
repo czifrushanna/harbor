@@ -34,14 +34,15 @@ const (
 
 // Result contains the extracted Dockerfile and the OCI digests that led to it.
 type Result struct {
-	Dockerfile               string
+	Dockerfile                string
 	AttestationManifestDigest string
-	StatementDigest          string
+	StatementDigest           string
 }
 
 // Workflow defines the Dockerfile extraction workflow.
 type Workflow interface {
 	ExtractDockerfile(ctx context.Context, ociArchivePath string) (*Result, error)
+	ExtractDockerfileFromReader(ctx context.Context, archive io.Reader) (*Result, error)
 }
 
 // NewWorkflow returns the default Dockerfile extraction workflow.
@@ -55,7 +56,7 @@ type archiveEntries map[string][]byte
 
 type index struct {
 	Manifests []struct {
-		Digest     string            `json:"digest"`
+		Digest      string            `json:"digest"`
 		Annotations map[string]string `json:"annotations"`
 	} `json:"manifests"`
 }
@@ -83,11 +84,21 @@ type buildKitStatement struct {
 }
 
 func (w *workflow) ExtractDockerfile(ctx context.Context, ociArchivePath string) (*Result, error) {
+	file, err := os.Open(ociArchivePath)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	return w.ExtractDockerfileFromReader(ctx, file)
+}
+
+func (w *workflow) ExtractDockerfileFromReader(ctx context.Context, archive io.Reader) (*Result, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 
-	entries, err := readArchiveEntries(ociArchivePath)
+	entries, err := readArchiveEntries(archive)
 	if err != nil {
 		return nil, err
 	}
@@ -128,21 +139,15 @@ func (w *workflow) ExtractDockerfile(ctx context.Context, ociArchivePath string)
 	}
 
 	return &Result{
-		Dockerfile:               dockerfile,
+		Dockerfile:                dockerfile,
 		AttestationManifestDigest: attestationDigest,
-		StatementDigest:          statementDigest,
+		StatementDigest:           statementDigest,
 	}, nil
 }
 
-func readArchiveEntries(ociArchivePath string) (archiveEntries, error) {
-	file, err := os.Open(ociArchivePath)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-
+func readArchiveEntries(archive io.Reader) (archiveEntries, error) {
 	entries := archiveEntries{}
-	reader := tar.NewReader(file)
+	reader := tar.NewReader(archive)
 	for {
 		header, err := reader.Next()
 		if err == io.EOF {

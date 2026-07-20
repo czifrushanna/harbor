@@ -18,6 +18,8 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"os"
+	"strings"
 
 	o "github.com/beego/beego/v2/client/orm"
 
@@ -31,6 +33,7 @@ import (
 	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/lib/log"
 	"github.com/goharbor/harbor/src/lib/orm"
+	buildkitdockerfilepkg "github.com/goharbor/harbor/src/pkg/buildkitdockerfile"
 )
 
 // InternalAPI handles request of harbor admin...
@@ -39,13 +42,22 @@ type InternalAPI struct {
 }
 
 var buildkitDockerfileCtl buildkitdockerfilectl.Controller = buildkitdockerfilectl.DefaultController
+var buildkitDockerfileOptimize = buildkitdockerfilepkg.OptimizeDockerfile
+
+const (
+	defaultLLMAPIBaseURL = "https://llmgw-litellm.web.cern.ch/v1/chat/completions"
+	defaultLLMModel      = "llama-3.1-8b-instruct"
+	defaultLLMAPIKeyEnv  = "LLMGW_API_KEY"
+)
 
 type buildkitDockerfileExtractRequest struct {
 	OCIArchivePath string `json:"oci_archive_path"`
+	Optimize       bool   `json:"optimize,omitempty"`
 }
 
 type buildkitDockerfileExtractResponse struct {
 	Dockerfile                string `json:"dockerfile"`
+	OptimizedDockerfile       string `json:"optimized_dockerfile,omitempty"`
 	AttestationManifestDigest string `json:"attestation_manifest_digest"`
 	StatementDigest           string `json:"statement_digest"`
 }
@@ -92,32 +104,77 @@ func (ia *InternalAPI) ExtractBuildkitDockerfile() {
 	ctx := ia.Ctx.Request.Context()
 	defer ia.Ctx.Request.Body.Close()
 
-	req := &buildkitDockerfileExtractRequest{}
-	body, err := io.ReadAll(ia.Ctx.Request.Body)
-	if err != nil {
-		ia.SendError(errors.BadRequestError(nil).WithMessage("failed to read request body"))
-		return
-	}
-	if err := json.Unmarshal(body, req); err != nil {
-		ia.SendError(errors.BadRequestError(nil).WithMessage(err.Error()))
-		return
-	}
-	if len(req.OCIArchivePath) == 0 {
-		ia.SendError(errors.BadRequestError(nil).WithMessage("oci_archive_path is required"))
-		return
-	}
-
-	result, err := buildkitDockerfileCtl.ExtractDockerfile(ctx, req.OCIArchivePath)
+	result, optimize, err := ia.extractBuildkitDockerfile(ctx)
 	if err != nil {
 		ia.SendError(err)
 		return
 	}
 
+	optimizedDockerfile := ""
+	if optimize {
+		apiKeyEnv := os.Getenv("LLMGW_API_KEY_ENV")
+		if apiKeyEnv == "" {
+			apiKeyEnv = defaultLLMAPIKeyEnv
+		}
+		apiKey := os.Getenv(apiKeyEnv)
+		if apiKey == "" {
+			ia.SendError(errors.UnknownError(nil).WithMessage("LLM optimization is not configured"))
+			return
+		}
+
+		apiBaseURL := os.Getenv("LLMGW_API_BASE_URL")
+		if apiBaseURL == "" {
+			apiBaseURL = defaultLLMAPIBaseURL
+		}
+		model := os.Getenv("LLMGW_MODEL")
+		if model == "" {
+			model = defaultLLMModel
+		}
+
+		optimizedDockerfile, err = buildkitDockerfileOptimize(ctx, apiBaseURL, apiKey, model, result.Dockerfile)
+		if err != nil {
+			ia.SendError(err)
+			return
+		}
+	}
+
 	ia.WriteJSONData(&buildkitDockerfileExtractResponse{
 		Dockerfile:                result.Dockerfile,
+		OptimizedDockerfile:       optimizedDockerfile,
 		AttestationManifestDigest: result.AttestationManifestDigest,
 		StatementDigest:           result.StatementDigest,
 	})
+}
+
+func (ia *InternalAPI) extractBuildkitDockerfile(ctx context.Context) (*buildkitdockerfilectl.Result, bool, error) {
+	if strings.HasPrefix(ia.Ctx.Request.Header.Get("Content-Type"), "multipart/form-data") {
+		file, _, err := ia.Ctx.Request.FormFile("oci_archive")
+		if err != nil {
+			file, _, err = ia.Ctx.Request.FormFile("archive")
+		}
+		if err != nil {
+			return nil, false, errors.BadRequestError(err).WithMessage("oci_archive upload is required")
+		}
+		defer file.Close()
+
+		result, err := buildkitDockerfileCtl.ExtractDockerfileFromReader(ctx, file)
+		return result, strings.EqualFold(ia.Ctx.Request.FormValue("optimize"), "true"), err
+	}
+
+	req := &buildkitDockerfileExtractRequest{}
+	body, err := io.ReadAll(ia.Ctx.Request.Body)
+	if err != nil {
+		return nil, false, errors.BadRequestError(nil).WithMessage("failed to read request body")
+	}
+	if err := json.Unmarshal(body, req); err != nil {
+		return nil, false, errors.BadRequestError(nil).WithMessage(err.Error())
+	}
+	if len(req.OCIArchivePath) == 0 {
+		return nil, false, errors.BadRequestError(nil).WithMessage("oci_archive_path is required")
+	}
+
+	result, err := buildkitDockerfileCtl.ExtractDockerfile(ctx, req.OCIArchivePath)
+	return result, req.Optimize, err
 }
 
 // SyncQuota ...

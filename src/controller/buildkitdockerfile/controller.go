@@ -16,6 +16,7 @@ package buildkitdockerfile
 
 import (
 	"context"
+	"io"
 
 	"github.com/goharbor/harbor/src/pkg/buildkitdockerfile"
 )
@@ -26,6 +27,7 @@ type Result = buildkitdockerfile.Result
 // Controller provides the BuildKit Dockerfile extraction entry point.
 type Controller interface {
 	ExtractDockerfile(ctx context.Context, ociArchivePath string) (*Result, error)
+	ExtractDockerfileFromReader(ctx context.Context, archive io.Reader) (*Result, error)
 }
 
 // DefaultController is the default adapter implementation.
@@ -44,4 +46,8 @@ type controller struct {
 
 func (c *controller) ExtractDockerfile(ctx context.Context, ociArchivePath string) (*Result, error) {
 	return c.workflow.ExtractDockerfile(ctx, ociArchivePath)
+}
+
+func (c *controller) ExtractDockerfileFromReader(ctx context.Context, archive io.Reader) (*Result, error) {
+	return c.workflow.ExtractDockerfileFromReader(ctx, archive)
 }

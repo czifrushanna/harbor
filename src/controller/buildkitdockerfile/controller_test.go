@@ -17,6 +17,7 @@ package buildkitdockerfile
 import (
 	"context"
 	"errors"
+	"io"
 	"testing"
 
 	workflow "github.com/goharbor/harbor/src/pkg/buildkitdockerfile"
@@ -29,6 +30,10 @@ type stubWorkflow struct {
 }
 
 func (s *stubWorkflow) ExtractDockerfile(ctx context.Context, ociArchivePath string) (*workflow.Result, error) {
+	return s.result, s.err
+}
+
+func (s *stubWorkflow) ExtractDockerfileFromReader(_ context.Context, _ io.Reader) (*workflow.Result, error) {
 	return s.result, s.err
 }
 
