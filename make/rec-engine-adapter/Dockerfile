@@ -4,7 +4,7 @@
 #
 #   docker build -f make/rec-engine-adapter/Dockerfile -t rec-engine-adapter:dev .
 #
-ARG golang_image=registry.cern.ch/docker.io/library/golang:1.25
+ARG golang_image=registry.cern.ch/docker.io/library/golang:1.26.4
 
 FROM ${golang_image} AS build
 
