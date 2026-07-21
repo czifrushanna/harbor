@@ -1391,7 +1391,7 @@ paths:
           $ref: '#/responses/500'
     post:
       summary: Optimize the Dockerfile for an artifact
-      description: Starts an asynchronous optimization through the registered optimizer adapter, which extracts the original Dockerfile embedded in the BuildKit provenance attestation and produces an LLM-optimized version. Poll the GET endpoint until the returned status is terminal (Success or Error).
+      description: Starts an asynchronous optimization through the registered optimizer adapter, which extracts the original Dockerfile embedded in the BuildKit provenance attestation (or, if the artifact carries no such attestation, reconstructs a best-effort Dockerfile from the image's config history) and produces an LLM-optimized version. Poll the GET endpoint until the returned status is terminal (Success or Error).
       tags:
         - dockerfile
       operationId: optimizeDockerfile
@@ -6997,12 +6997,15 @@ definitions:
           $ref: '#/definitions/Error'
           x-nullable: false
   DockerfileOptimization:
-    description: The original and LLM-optimized Dockerfiles extracted from a BuildKit provenance attestation
+    description: >-
+      The original and LLM-optimized Dockerfiles for an artifact. `dockerfile` is either
+      extracted verbatim from a BuildKit provenance attestation, or, when no such
+      attestation exists (see `generated`), reconstructed from the image's config history.
     type: object
     properties:
       dockerfile:
         type: string
-        description: The original Dockerfile extracted from the BuildKit attestation
+        description: The original Dockerfile, extracted from BuildKit provenance or reconstructed from image history (see `generated`)
       optimized_dockerfile:
         type: string
         description: The LLM-optimized version of the Dockerfile
@@ -7012,6 +7015,13 @@ definitions:
       statement_digest:
         type: string
         description: The digest of the in-toto statement blob that contained the Dockerfile source
+      generated:
+        type: boolean
+        description: >-
+          True when dockerfile was reconstructed from the image's config history because
+          no BuildKit provenance attestation was found on the artifact, rather than
+          extracted verbatim from one. Generated Dockerfiles are a best-effort
+          approximation and should be reviewed.
       created_at:
         type: string
         format: date-time

@@ -5,9 +5,26 @@
     </div>
 
     <ng-container *ngIf="!loadingCached && result">
+        <div *ngIf="result.generated" class="alert alert-warning" role="alert">
+            <div class="alert-items">
+                <div class="alert-item static">
+                    <div class="alert-icon-wrapper">
+                        <cds-icon class="alert-icon" shape="exclamation-triangle"></cds-icon>
+                    </div>
+                    <span class="alert-text">{{
+                        'REPOSITORY.DOCKERFILE_GENERATED_HINT' | translate
+                    }}</span>
+                </div>
+            </div>
+        </div>
         <div class="clr-row comparison-panels">
             <div class="clr-col-6">
-                <h5>{{ 'REPOSITORY.DOCKERFILE_ORIGINAL' | translate }}</h5>
+                <h5>{{
+                    (result.generated
+                        ? 'REPOSITORY.DOCKERFILE_ORIGINAL_GENERATED'
+                        : 'REPOSITORY.DOCKERFILE_ORIGINAL'
+                    ) | translate
+                }}</h5>
                 <pre class="dockerfile-pre">{{ result.dockerfile }}</pre>
             </div>
             <div class="clr-col-6">

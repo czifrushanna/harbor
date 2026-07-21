@@ -209,6 +209,7 @@ func (j *Job) Run(ctx job.Context, params job.Parameters) error {
 		rec.OptimizedDockerfile = report.OptimizedDockerfile
 		rec.AttestationManifestDigest = report.AttestationManifestDigest
 		rec.StatementDigest = report.StatementDigest
+		rec.Generated = report.Generated
 		rec.Status = dockerfileoptdao.StatusSuccess
 		rec.Error = ""
 		if err := optDAO.Upsert(ctx.SystemContext(), rec); err != nil {

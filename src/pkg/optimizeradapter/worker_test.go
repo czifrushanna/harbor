@@ -203,6 +203,61 @@ func TestRun_SuccessAndLLMFailedShareExtraction(t *testing.T) {
 	})
 }
 
+func TestRun_GeneratesDockerfileWhenNoAttestation(t *testing.T) {
+	idx := []byte(`{"config":{"digest":"sha256:cfg"},"layers":[{"digest":"sha256:layer1"}]}`)
+	cfg := []byte(`{
+		"config": {"Env": ["PATH=/usr/bin"], "Cmd": ["/bin/sh"]},
+		"history": [
+			{"created_by": "/bin/sh -c #(nop)  ENV PATH=/usr/bin", "empty_layer": true},
+			{"created_by": "/bin/sh -c apk add --no-cache curl", "empty_layer": false},
+			{"created_by": "/bin/sh -c #(nop)  CMD [\"/bin/sh\"]", "empty_layer": true}
+		]
+	}`)
+
+	cli := &registrytesting.Client{}
+	cli.On("PullManifest", "library/photon", "sha256:artifact").Return(&stubManifest{data: idx}, "sha256:artifact", nil)
+	cli.On("PullManifest", "library/photon", "sha256:cfg").Return(&stubManifest{data: cfg}, "sha256:cfg", nil)
+	withFakeRegistryClient(t, cli)
+
+	llm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprintln(w, `data: {"choices":[{"delta":{"content":"FROM alpine:3.21\n"}}]}`)
+		fmt.Fprintln(w, "data: [DONE]")
+	}))
+	defer llm.Close()
+
+	s := NewServer(&Config{APIKey: "key", APIBaseURL: llm.URL, Model: "test-model", MaxConcurrency: 1})
+	report := s.run(context.Background(), sampleOptimizeRequest())
+
+	require.Equal(t, v1.ReportStatusSuccess, report.Status)
+	require.True(t, report.Generated)
+	require.Contains(t, report.Dockerfile, "FROM scratch")
+	require.Contains(t, report.Dockerfile, "ENV PATH=/usr/bin")
+	require.Contains(t, report.Dockerfile, "RUN apk add --no-cache curl")
+	require.Contains(t, report.Dockerfile, `CMD ["/bin/sh"]`)
+	require.Equal(t, "FROM alpine:3.21\n", report.OptimizedDockerfile)
+	require.Empty(t, report.AttestationManifestDigest)
+}
+
+func TestRun_NoAttestationAndGenerationFailsStillNoAttestation(t *testing.T) {
+	// No manifests at all, and no config digest either: the generation
+	// fallback can't find anything to work with, so the report stays
+	// classified as NO_ATTESTATION (nothing usable was found either way).
+	idx := []byte(`{"manifests":[]}`)
+
+	cli := &registrytesting.Client{}
+	cli.On("PullManifest", "library/photon", "sha256:artifact").Return(&stubManifest{data: idx}, "sha256:artifact", nil)
+	withFakeRegistryClient(t, cli)
+
+	s := testServer()
+	report := s.run(context.Background(), sampleOptimizeRequest())
+
+	require.Equal(t, v1.ReportStatusFailed, report.Status)
+	require.NotNil(t, report.Error)
+	require.Equal(t, v1.ErrorCodeNoAttestation, report.Error.Code)
+	require.Contains(t, report.Error.Message, "generation fallback also failed")
+	require.False(t, report.Generated)
+}
+
 func TestProcess_StoresTerminalReport(t *testing.T) {
 	idx := []byte(`{"manifests":[]}`)
 	cli := &registrytesting.Client{}

@@ -85,7 +85,9 @@ func (s *Server) metadata() *v1.OptimizerAdapterMetadata {
 			{
 				// BuildKit provenance attestations hang off the image index, so the
 				// index/list mime types are the primary targets; plain manifests are
-				// accepted too (they terminate with a NO_ATTESTATION report).
+				// accepted too (they fall back to the image-history Dockerfile
+				// generator and only terminate with a NO_ATTESTATION report if that
+				// fallback also fails).
 				ConsumesMimeTypes: []string{
 					v1.MimeTypeOCIIndex,
 					v1.MimeTypeDockerManifestList,

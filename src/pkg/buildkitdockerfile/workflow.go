@@ -37,6 +37,10 @@ type Result struct {
 	Dockerfile                string
 	AttestationManifestDigest string
 	StatementDigest           string
+	// Generated is true when Dockerfile was reconstructed from image config
+	// history (see generate.go) rather than extracted verbatim from a BuildKit
+	// provenance attestation.
+	Generated bool
 }
 
 // BlobSource abstracts how OCI index/manifest/blob bytes are fetched, allowing

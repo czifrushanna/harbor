@@ -107,6 +107,7 @@ func toDockerfileOptimizationModel(rec *dockerfileoptdao.DockerfileOptimization)
 		OptimizedDockerfile:       rec.OptimizedDockerfile,
 		AttestationManifestDigest: rec.AttestationManifestDigest,
 		StatementDigest:           rec.StatementDigest,
+		Generated:                 rec.Generated,
 		Status:                    rec.Status,
 		Error:                     rec.Error,
 		CreatedAt:                 strfmt.DateTime(rec.CreatedAt),

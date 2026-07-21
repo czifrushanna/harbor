@@ -16,6 +16,7 @@ package optimizeradapter
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -77,11 +78,20 @@ func (s *Server) run(ctx context.Context, req *v1.OptimizeRequest) *v1.Optimizat
 	// 2. Extract the Dockerfile from the BuildKit provenance attestation.
 	result, err := buildkitdockerfile.NewWorkflow().ExtractDockerfileFromSource(ctx, src)
 	if err != nil {
-		code := v1.ErrorCodeExtractionFailed
-		if strings.Contains(err.Error(), "attestation manifest not found") {
-			code = v1.ErrorCodeNoAttestation
+		if !strings.Contains(err.Error(), "attestation manifest not found") {
+			return failedReport(v1.ErrorCodeExtractionFailed, err.Error())
 		}
-		return failedReport(code, err.Error())
+
+		// No BuildKit provenance attestation on this artifact (e.g. it wasn't
+		// built with BuildKit, or was pulled/re-pushed without one): fall back
+		// to reconstructing a best-effort Dockerfile from the image's own
+		// config history rather than failing outright.
+		generated, genErr := buildkitdockerfile.GenerateDockerfileFromSource(ctx, src)
+		if genErr != nil {
+			return failedReport(v1.ErrorCodeNoAttestation,
+				fmt.Sprintf("no provenance attestation, and Dockerfile generation fallback also failed: %s", genErr.Error()))
+		}
+		result = generated
 	}
 
 	// 3. Optimize via the LLM gateway.
@@ -96,6 +106,7 @@ func (s *Server) run(ctx context.Context, req *v1.OptimizeRequest) *v1.Optimizat
 		OptimizedDockerfile:       stripCodeFences(optimized),
 		AttestationManifestDigest: result.AttestationManifestDigest,
 		StatementDigest:           result.StatementDigest,
+		Generated:                 result.Generated,
 	}
 }
 

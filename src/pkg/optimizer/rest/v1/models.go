@@ -205,6 +205,10 @@ type OptimizationReport struct {
 	AttestationManifestDigest string `json:"attestation_manifest_digest,omitempty"`
 	// StatementDigest is the digest of the in-toto statement blob
 	StatementDigest string `json:"statement_digest,omitempty"`
+	// Generated is true when Dockerfile was reconstructed from the image's
+	// config history rather than extracted verbatim from a BuildKit
+	// provenance attestation (no attestation was found on the artifact).
+	Generated bool `json:"generated,omitempty"`
 }
 
 // FromJSON parses OptimizationReport from json data
